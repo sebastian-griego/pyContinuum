@@ -1,0 +1,491 @@
+"""
+Polynomial representation module for PyContinuum.
+
+This module provides classes and functions for representing and manipulating
+multivariate polynomials and polynomial systems.
+"""
+
+import numpy as np
+from typing import Dict, List, Tuple, Union, Set, Any, Optional
+
+
+class Variable:
+    """Representation of a polynomial variable."""
+    
+    def __init__(self, name: str):
+        """Initialize a variable with a name.
+        
+        Args:
+            name: String name of the variable
+        """
+        self.name = name
+        
+    def __repr__(self) -> str:
+        return self.name
+    
+    def __pow__(self, exponent: int) -> "Monomial":
+        """Raise the variable to a power, creating a monomial."""
+        return Monomial({self: exponent})
+    
+    def __mul__(self, other: Any) -> Union["Polynomial", "Monomial"]:
+        """Multiply the variable by another object."""
+        if isinstance(other, (int, float, complex)):
+            return Monomial({self: 1}, coefficient=other)
+        elif isinstance(other, Variable):
+            return Monomial({self: 1, other: 1})
+        elif isinstance(other, Monomial):
+            new_vars = other.variables.copy()
+            if self in new_vars:
+                new_vars[self] += 1
+            else:
+                new_vars[self] = 1
+            return Monomial(new_vars, coefficient=other.coefficient)
+        elif isinstance(other, Polynomial):
+            return other * self
+        else:
+            return NotImplemented
+    
+    def __rmul__(self, other: Any) -> "Monomial":
+        """Handle multiplication when the variable is on the right."""
+        if isinstance(other, (int, float, complex)):
+            return Monomial({self: 1}, coefficient=other)
+        return NotImplemented
+    
+    def __add__(self, other: Any) -> "Polynomial":
+        """Add the variable to another object."""
+        if isinstance(other, (int, float, complex)):
+            return Polynomial([Monomial({self: 1}), Monomial({}, coefficient=other)])
+        elif isinstance(other, Variable):
+            return Polynomial([Monomial({self: 1}), Monomial({other: 1})])
+        elif isinstance(other, (Monomial, Polynomial)):
+            return Polynomial([Monomial({self: 1})]) + other
+        else:
+            return NotImplemented
+    
+    def __radd__(self, other: Any) -> "Polynomial":
+        """Handle addition when the variable is on the right."""
+        if isinstance(other, (int, float, complex)):
+            return Polynomial([Monomial({self: 1}), Monomial({}, coefficient=other)])
+        return NotImplemented
+    
+    def __sub__(self, other: Any) -> "Polynomial":
+        """Subtract another object from the variable."""
+        if isinstance(other, (int, float, complex)):
+            return Polynomial([Monomial({self: 1}), Monomial({}, coefficient=-other)])
+        elif isinstance(other, Variable):
+            return Polynomial([Monomial({self: 1}), Monomial({other: 1}, coefficient=-1)])
+        elif isinstance(other, (Monomial, Polynomial)):
+            return Polynomial([Monomial({self: 1})]) - other
+        else:
+            return NotImplemented
+    
+    def __rsub__(self, other: Any) -> "Polynomial":
+        """Handle subtraction when the variable is on the right."""
+        if isinstance(other, (int, float, complex)):
+            return Polynomial([Monomial({self: 1}, coefficient=-1), Monomial({}, coefficient=other)])
+        return NotImplemented
+
+
+class Monomial:
+    """Representation of a monomial (term in a polynomial)."""
+    
+    def __init__(self, variables: Dict[Variable, int], coefficient: complex = 1):
+        """Initialize a monomial with variables and their exponents.
+        
+        Args:
+            variables: Dict mapping Variable objects to their exponents
+            coefficient: Coefficient of the monomial (default: 1)
+        """
+        # Filter out zero exponents
+        self.variables = {var: exp for var, exp in variables.items() if exp != 0}
+        self.coefficient = coefficient
+        
+    def __repr__(self) -> str:
+        if not self.variables and self.coefficient == 0:
+            return "0"
+        
+        if not self.variables:
+            return str(self.coefficient)
+        
+        coef_str = ""
+        if self.coefficient != 1:
+            if self.coefficient == -1:
+                coef_str = "-"
+            else:
+                coef_str = f"{self.coefficient}*"
+        
+        var_strs = []
+        for var, exp in self.variables.items():
+            if exp == 1:
+                var_strs.append(f"{var.name}")
+            else:
+                var_strs.append(f"{var.name}^{exp}")
+        
+        return f"{coef_str}{'*'.join(var_strs)}"
+    
+    def degree(self) -> int:
+        """Get the total degree of the monomial."""
+        return sum(self.variables.values())
+    
+    def evaluate(self, values: Dict[Variable, complex]) -> complex:
+        """Evaluate the monomial at specific variable values.
+        
+        Args:
+            values: Dict mapping variables to their values
+            
+        Returns:
+            The evaluated value of the monomial
+        """
+        result = self.coefficient
+        for var, exp in self.variables.items():
+            result *= values.get(var, 0) ** exp
+        return result
+    
+    def __mul__(self, other: Any) -> Union["Polynomial", "Monomial"]:
+        """Multiply the monomial by another object."""
+        if isinstance(other, (int, float, complex)):
+            return Monomial(self.variables.copy(), coefficient=self.coefficient * other)
+        elif isinstance(other, Variable):
+            new_vars = self.variables.copy()
+            if other in new_vars:
+                new_vars[other] += 1
+            else:
+                new_vars[other] = 1
+            return Monomial(new_vars, coefficient=self.coefficient)
+        elif isinstance(other, Monomial):
+            new_vars = self.variables.copy()
+            for var, exp in other.variables.items():
+                if var in new_vars:
+                    new_vars[var] += exp
+                else:
+                    new_vars[var] = exp
+            return Monomial(new_vars, coefficient=self.coefficient * other.coefficient)
+        elif isinstance(other, Polynomial):
+            return other * self
+        else:
+            return NotImplemented
+    
+    def __rmul__(self, other: Any) -> "Monomial":
+        """Handle multiplication when the monomial is on the right."""
+        if isinstance(other, (int, float, complex)):
+            return Monomial(self.variables.copy(), coefficient=self.coefficient * other)
+        return NotImplemented
+    
+    def __add__(self, other: Any) -> "Polynomial":
+        """Add the monomial to another object."""
+        if isinstance(other, (int, float, complex)):
+            return Polynomial([self, Monomial({}, coefficient=other)])
+        elif isinstance(other, Variable):
+            return Polynomial([self, Monomial({other: 1})])
+        elif isinstance(other, Monomial):
+            return Polynomial([self, other])
+        elif isinstance(other, Polynomial):
+            return other + self
+        else:
+            return NotImplemented
+    
+    def __radd__(self, other: Any) -> "Polynomial":
+        """Handle addition when the monomial is on the right."""
+        if isinstance(other, (int, float, complex)):
+            return Polynomial([self, Monomial({}, coefficient=other)])
+        return NotImplemented
+    
+    def __sub__(self, other: Any) -> "Polynomial":
+        """Subtract another object from the monomial."""
+        if isinstance(other, (int, float, complex)):
+            return Polynomial([self, Monomial({}, coefficient=-other)])
+        elif isinstance(other, Variable):
+            return Polynomial([self, Monomial({other: 1}, coefficient=-1)])
+        elif isinstance(other, Monomial):
+            return Polynomial([self, Monomial(other.variables, coefficient=-other.coefficient)])
+        elif isinstance(other, Polynomial):
+            return Polynomial([self]) - other
+        else:
+            return NotImplemented
+    
+    def __rsub__(self, other: Any) -> "Polynomial":
+        """Handle subtraction when the monomial is on the right."""
+        if isinstance(other, (int, float, complex)):
+            return Polynomial([Monomial(self.variables, coefficient=-self.coefficient), 
+                             Monomial({}, coefficient=other)])
+        return NotImplemented
+    
+    def partial_derivative(self, var: Variable) -> "Monomial":
+        """Compute partial derivative with respect to a variable.
+        
+        Args:
+            var: Variable to differentiate with respect to
+            
+        Returns:
+            Derivative as a new Monomial
+        """
+        if var not in self.variables:
+            return Monomial({}, coefficient=0)
+        
+        exp = self.variables[var]
+        new_vars = self.variables.copy()
+        new_coef = self.coefficient * exp
+        
+        if exp == 1:
+            del new_vars[var]
+        else:
+            new_vars[var] = exp - 1
+            
+        return Monomial(new_vars, coefficient=new_coef)
+
+
+class Polynomial:
+    """Representation of a multivariate polynomial."""
+    
+    def __init__(self, terms: List[Union[Monomial, Variable, int, float, complex]]):
+        """Initialize a polynomial from a list of terms.
+        
+        Args:
+            terms: List of monomials, variables, or constants
+        """
+        self.terms = []
+        for term in terms:
+            if isinstance(term, Monomial):
+                self.terms.append(term)
+            elif isinstance(term, Variable):
+                self.terms.append(Monomial({term: 1}))
+            elif isinstance(term, (int, float, complex)):
+                self.terms.append(Monomial({}, coefficient=term))
+            else:
+                raise TypeError(f"Unsupported term type: {type(term)}")
+        
+        self._combine_like_terms()
+    
+    def _combine_like_terms(self):
+        """Combine like terms in the polynomial."""
+        term_dict = {}
+        for term in self.terms:
+            # Create a hashable key from the variables and exponents
+            key = tuple(sorted((var.name, exp) for var, exp in term.variables.items()))
+            if key in term_dict:
+                term_dict[key] += term.coefficient
+            else:
+                term_dict[key] = term.coefficient
+        
+        # Rebuild terms from the combined coefficients
+        self.terms = []
+        for key, coef in term_dict.items():
+            if abs(coef) > 1e-15:  # Avoid floating point noise
+                var_dict = {}
+                for var_name, exp in key:
+                    # Recreate the Variable object - this is why we need to be careful with equality
+                    for term in self.terms:
+                        for var in term.variables:
+                            if var.name == var_name:
+                                var_dict[var] = exp
+                                break
+                        else:
+                            continue
+                        break
+                    else:
+                        # If we didn't find the variable in existing terms, create a new one
+                        var_dict[Variable(var_name)] = exp
+                self.terms.append(Monomial(var_dict, coefficient=coef))
+    
+    def __repr__(self) -> str:
+        if not self.terms:
+            return "0"
+        
+        term_strs = []
+        for i, term in enumerate(self.terms):
+            if i == 0:
+                term_strs.append(str(term))
+            else:
+                if term.coefficient > 0:
+                    term_strs.append(f"+ {term}")
+                else:
+                    # If coefficient is negative, the minus sign is included in the term repr
+                    term_strs.append(f"{term}")
+        
+        return " ".join(term_strs)
+    
+    def degree(self) -> int:
+        """Get the maximum degree of any term in the polynomial."""
+        if not self.terms:
+            return 0
+        return max(term.degree() for term in self.terms)
+    
+    def variables(self) -> Set[Variable]:
+        """Get the set of all variables in the polynomial."""
+        vars_set = set()
+        for term in self.terms:
+            vars_set.update(term.variables.keys())
+        return vars_set
+    
+    def evaluate(self, values: Dict[Variable, complex]) -> complex:
+        """Evaluate the polynomial at specific variable values.
+        
+        Args:
+            values: Dict mapping variables to their values
+            
+        Returns:
+            The evaluated value of the polynomial
+        """
+        return sum(term.evaluate(values) for term in self.terms)
+    
+    def __add__(self, other: Any) -> "Polynomial":
+        """Add another object to the polynomial."""
+        if isinstance(other, (int, float, complex)):
+            return Polynomial(self.terms + [Monomial({}, coefficient=other)])
+        elif isinstance(other, Variable):
+            return Polynomial(self.terms + [Monomial({other: 1})])
+        elif isinstance(other, Monomial):
+            return Polynomial(self.terms + [other])
+        elif isinstance(other, Polynomial):
+            return Polynomial(self.terms + other.terms)
+        else:
+            return NotImplemented
+    
+    def __radd__(self, other: Any) -> "Polynomial":
+        """Handle addition when the polynomial is on the right."""
+        return self + other
+    
+    def __sub__(self, other: Any) -> "Polynomial":
+        """Subtract another object from the polynomial."""
+        if isinstance(other, (int, float, complex)):
+            return Polynomial(self.terms + [Monomial({}, coefficient=-other)])
+        elif isinstance(other, Variable):
+            return Polynomial(self.terms + [Monomial({other: 1}, coefficient=-1)])
+        elif isinstance(other, Monomial):
+            return Polynomial(self.terms + [Monomial(other.variables, coefficient=-other.coefficient)])
+        elif isinstance(other, Polynomial):
+            return Polynomial(self.terms + [Monomial(term.variables, coefficient=-term.coefficient) 
+                                          for term in other.terms])
+        else:
+            return NotImplemented
+    
+    def __rsub__(self, other: Any) -> "Polynomial":
+        """Handle subtraction when the polynomial is on the right."""
+        if isinstance(other, (int, float, complex)):
+            return Polynomial([Monomial({}, coefficient=other)] + 
+                            [Monomial(term.variables, coefficient=-term.coefficient) for term in self.terms])
+        return NotImplemented
+    
+    def __mul__(self, other: Any) -> "Polynomial":
+        """Multiply the polynomial by another object."""
+        if isinstance(other, (int, float, complex)):
+            return Polynomial([term * other for term in self.terms])
+        elif isinstance(other, Variable):
+            return Polynomial([term * other for term in self.terms])
+        elif isinstance(other, Monomial):
+            return Polynomial([term * other for term in self.terms])
+        elif isinstance(other, Polynomial):
+            result_terms = []
+            for term1 in self.terms:
+                for term2 in other.terms:
+                    result_terms.append(term1 * term2)
+            return Polynomial(result_terms)
+        else:
+            return NotImplemented
+    
+    def __rmul__(self, other: Any) -> "Polynomial":
+        """Handle multiplication when the polynomial is on the right."""
+        return self * other
+    
+    def __pow__(self, exponent: int) -> "Polynomial":
+        """Raise the polynomial to a power.
+        
+        Args:
+            exponent: Non-negative integer exponent
+            
+        Returns:
+            The polynomial raised to the given power
+        """
+        if not isinstance(exponent, int) or exponent < 0:
+            raise ValueError("Exponent must be a non-negative integer")
+        
+        if exponent == 0:
+            return Polynomial([1])
+        
+        if exponent == 1:
+            return Polynomial(self.terms)
+        
+        # Use binary exponentiation for efficiency
+        result = Polynomial([1])
+        base = Polynomial(self.terms)
+        while exponent > 0:
+            if exponent & 1:  # exponent is odd
+                result = result * base
+            base = base * base
+            exponent >>= 1
+            
+        return result
+    
+    def partial_derivative(self, var: Variable) -> "Polynomial":
+        """Compute partial derivative with respect to a variable.
+        
+        Args:
+            var: Variable to differentiate with respect to
+            
+        Returns:
+            Derivative as a new Polynomial
+        """
+        return Polynomial([term.partial_derivative(var) for term in self.terms])
+    
+    def jacobian(self, vars_list: List[Variable]) -> List[List["Polynomial"]]:
+        """Compute the Jacobian matrix of partial derivatives.
+        
+        Args:
+            vars_list: List of variables for the Jacobian
+            
+        Returns:
+            Jacobian matrix as a list of lists of polynomials
+        """
+        return [[self.partial_derivative(var) for var in vars_list]]
+
+
+class PolynomialSystem:
+    """Representation of a system of polynomial equations."""
+    
+    def __init__(self, equations: List[Polynomial]):
+        """Initialize a polynomial system from a list of equations.
+        
+        Args:
+            equations: List of polynomials that make up the system
+        """
+        self.equations = equations
+    
+    def __repr__(self) -> str:
+        return "\n".join([f"{i}: {eq}" for i, eq in enumerate(self.equations)])
+    
+    def variables(self) -> Set[Variable]:
+        """Get the set of all variables in the system."""
+        vars_set = set()
+        for eq in self.equations:
+            vars_set.update(eq.variables())
+        return vars_set
+    
+    def evaluate(self, values: Dict[Variable, complex]) -> List[complex]:
+        """Evaluate the system at specific variable values.
+        
+        Args:
+            values: Dict mapping variables to their values
+            
+        Returns:
+            List of evaluated values for each equation
+        """
+        return [eq.evaluate(values) for eq in self.equations]
+    
+    def jacobian(self, vars_list: List[Variable]) -> List[List[Polynomial]]:
+        """Compute the Jacobian matrix of partial derivatives.
+        
+        Args:
+            vars_list: List of variables for the Jacobian
+            
+        Returns:
+            Jacobian matrix as a list of lists of polynomials
+        """
+        return [eq.jacobian(vars_list)[0] for eq in self.equations]
+    
+    def degrees(self) -> List[int]:
+        """Get the degrees of each polynomial in the system.
+        
+        Returns:
+            List of degrees for each polynomial
+        """
+        return [eq.degree() for eq in self.equations]
