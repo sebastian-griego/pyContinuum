@@ -22,7 +22,6 @@ def main():
     """Run the simple example."""
     print("PyContinuum Simple Example")
     print("=========================")
-    
     # Define variables
     print("Defining variables and equations...")
     x, y = polyvar('x', 'y')
@@ -32,12 +31,18 @@ def main():
     f2 = x**2 - y             # parabola: x^2 = y
     system = PolynomialSystem([f1, f2])
     
+    # Debug the variables
+    vars_set = system.variables()
+    print(f"Variables in the system: {vars_set}")
+    print(f"Number of variables: {len(vars_set)}")
+    variables_list = list(vars_set)
+    
     print(f"System to solve:\n{system}\n")
     
     # Solve the system
     print("Solving the system...")
     start_time = time.time()
-    solutions = solve(system, verbose=True)
+    solutions = solve(system, variables=variables_list, verbose=True)
     solve_time = time.time() - start_time
     
     print(f"\nSolve completed in {solve_time:.3f} seconds")

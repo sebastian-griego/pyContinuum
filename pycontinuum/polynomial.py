@@ -23,6 +23,15 @@ class Variable:
     def __repr__(self) -> str:
         return self.name
     
+    # Add these methods to properly handle equality and hashing
+    def __eq__(self, other):
+        if not isinstance(other, Variable):
+            return False
+        return self.name == other.name
+    
+    def __hash__(self):
+        return hash(self.name)
+    
     def __pow__(self, exponent: int) -> "Monomial":
         """Raise the variable to a power, creating a monomial."""
         return Monomial({self: exponent})
@@ -489,3 +498,16 @@ class PolynomialSystem:
             List of degrees for each polynomial
         """
         return [eq.degree() for eq in self.equations]
+    
+
+def polyvar(*names: str) -> Union[Variable, Tuple[Variable, ...]]:
+    """Create polynomial variables with the given names.
+    
+    Args:
+        *names: Variable names
+        
+    Returns:
+        A single Variable or a tuple of Variables
+    """
+    variables = tuple(Variable(name) for name in names)
+    return variables[0] if len(variables) == 1 else variables

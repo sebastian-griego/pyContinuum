@@ -9,8 +9,7 @@ import numpy as np
 import cmath
 from typing import Dict, List, Tuple, Set, Any
 
-from pycontinuum.polynomial import Variable, Polynomial, PolynomialSystem
-
+from pycontinuum.polynomial import Variable, Polynomial, PolynomialSystem, Monomial
 
 def generate_total_degree_start_system(target_system: PolynomialSystem, 
                                       variables: List[Variable]) -> Tuple[PolynomialSystem, List[List[complex]]]:
@@ -45,12 +44,12 @@ def generate_total_degree_start_system(target_system: PolynomialSystem,
     # Create the start system equations x_i^(d_i) - c_i = 0
     start_equations = []
     for i, (var, deg, c) in enumerate(zip(variables, degrees, c_values)):
-        # Create x_i^(d_i)
-        term1 = Polynomial([Monomial({var: deg})])
-        # Create c_i
-        term2 = Polynomial([Monomial({}, coefficient=c)])
-        # Create x_i^(d_i) - c_i
-        eq = term1 - term2
+        # Create x_i^(d_i) term using Monomial
+        term1 = Monomial({var: deg})
+        # Create c_i term using Monomial
+        term2 = Monomial({}, coefficient=c)
+        # Create x_i^(d_i) - c_i using Polynomial
+        eq = Polynomial([term1, Monomial({}, coefficient=-c)])
         start_equations.append(eq)
     
     # Create the start system
@@ -60,7 +59,6 @@ def generate_total_degree_start_system(target_system: PolynomialSystem,
     start_solutions = generate_total_degree_solutions(degrees, c_values)
     
     return start_system, start_solutions
-
 
 def generate_total_degree_solutions(degrees: List[int], 
                                    c_values: List[complex]) -> List[List[complex]]:
@@ -103,17 +101,3 @@ def generate_total_degree_solutions(degrees: List[int],
     build_solutions([], 0)
     return solutions
 
-
-class Monomial:
-    """Representation of a monomial (term in a polynomial) for internal use."""
-    
-    def __init__(self, variables: Dict[Variable, int], coefficient: complex = 1):
-        """Initialize a monomial with variables and their exponents.
-        
-        Args:
-            variables: Dict mapping Variable objects to their exponents
-            coefficient: Coefficient of the monomial (default: 1)
-        """
-        # Filter out zero exponents
-        self.variables = {var: exp for var, exp in variables.items() if exp != 0}
-        self.coefficient = coefficient
