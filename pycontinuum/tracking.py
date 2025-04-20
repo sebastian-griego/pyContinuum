@@ -11,7 +11,6 @@ import time
 from tqdm.auto import tqdm
 
 from pycontinuum.polynomial import Variable, Polynomial, PolynomialSystem
-from pycontinuum.endgame import CauchyEndgame, EndgameResult
 
 
 def evaluate_system_at_point(system: PolynomialSystem, 
@@ -238,8 +237,7 @@ def track_single_path(start_system: PolynomialSystem,
                      max_step_size: float = 0.1,
                      gamma: complex = 0.6+0.8j,
                      endgame_start: float = 0.1,
-                     store_paths: bool = False,
-                     use_endgame: bool = True) -> Tuple[np.ndarray, Dict[str, Any]]:
+                     store_paths: bool = False) -> Tuple[np.ndarray, Dict[str, Any]]:
     """Track a single path from start_solution (t=1) to the target system (t=0).
     Args:
         start_system: Start system g(x)
@@ -252,7 +250,6 @@ def track_single_path(start_system: PolynomialSystem,
         gamma: Random complex number for the homotopy
         endgame_start: t-value at which to start the endgame
         store_paths: Whether to store path points and print detailed progress
-        use_endgame: Whether to use the endgame strategy for singular paths
         
     Returns:
         Tuple of (end_solution, path_info)
@@ -268,69 +265,19 @@ def track_single_path(start_system: PolynomialSystem,
         'singular': False,
         'steps': 0,
         'newton_iters': 0,
-        'path_points': [(t, current_point.copy())] if store_paths else [],
-        'endgame_used': False
+        'path_points': [(t, current_point.copy())] if store_paths else []
     }
     
-    # Define the predictor-corrector function for the endgame
-    def predictor_corrector_step(start_sys, target_sys, point, t_from, t_to, vars_list, g):
-        # Compute tangent at current point
-        tangent = compute_tangent(start_sys, target_sys, point, t_from, vars_list, g)
-        
-        # Predict the next point using Euler's method
-        predicted = euler_predictor(t_from, t_to, point, tangent)
-        
-        # Define the functions for evaluation
-        def evaluate_homotopy(point_dict):
-            f_values = [eq.evaluate(point_dict) for eq in target_sys.equations]
-            g_values = [eq.evaluate(point_dict) for eq in start_sys.equations]
-            return [(1 - t_to) * f + t_to * g * g for f, g in zip(f_values, g_values)]
-        
-        def jacobian_homotopy(vars_list):
-            # Create a dictionary for evaluation
-            value_dict = {var: predicted[i] for i, var in enumerate(vars_list)}
-            
-            # Get Jacobian polynomials
-            target_jac = target_sys.jacobian(vars_list)
-            start_jac = start_sys.jacobian(vars_list)
-            
-            # Compute the homotopy Jacobian
-            result = []
-            for row_f, row_g in zip(target_jac, start_jac):
-                new_row = []
-                for f, g in zip(row_f, row_g):
-                    f_val = f.evaluate(value_dict)
-                    g_val = g.evaluate(value_dict)
-                    new_val = (1 - t_to) * f_val + t_to * g * g_val
-                    
-                    # Create a constant Polynomial with this value
-                    from pycontinuum.polynomial import Polynomial, Monomial
-                    new_poly = Polynomial([Monomial({}, coefficient=new_val)])
-                    new_row.append(new_poly)
-                result.append(new_row)
-            
-            return result
-        
-        # Create a simple system with our functions
-        homotopy_system = PolynomialSystem([])  # Placeholder
-        homotopy_system.evaluate = evaluate_homotopy
-        homotopy_system.jacobian = jacobian_homotopy
-        
-        # Apply Newton's method to correct the predicted point
-        corrected, success, _ = newton_corrector(homotopy_system, predicted, vars_list, tol=tol)
-        
-        return corrected, success
-    
-    # Use standard path tracking until we reach the endgame zone
-    while t > (endgame_start if use_endgame else 0):
+    # Use a simple continuation method to track the path
+    while t > 0:
         path_info['steps'] += 1
         
         # Reduce step size for the final approach
-        if t < endgame_start * 2 and step_size > min_step_size:
-            step_size = max(min_step_size, t / 10)  # Reduce step size near endgame zone
+        if t < endgame_start and step_size > min_step_size:
+            step_size = max(min_step_size, t / 10)  # Reduce step size for endpoint accuracy
             
-        # Set target t for this step (don't go below endgame_start)
-        t_target = max(endgame_start if use_endgame else 0.0, t - step_size)
+        # Set target t for this step (don't go below 0)
+        t_target = max(0.0, t - step_size)
         
         # Check for infinity or NaN
         if not np.all(np.isfinite(current_point)):
@@ -414,48 +361,7 @@ def track_single_path(start_system: PolynomialSystem,
         if store_paths:
             path_info['path_points'].append((t, current_point.copy()))
     
-    # If we're using the endgame and have reached the endgame zone
-    if use_endgame and t <= endgame_start:
-        if store_paths:
-            print(f"Entering endgame zone at t={t}")
-        
-        # Create the Cauchy endgame strategy
-        cauchy_endgame = CauchyEndgame(abs_tol=tol)
-        
-        # Run the endgame
-        endgame_result = cauchy_endgame.run(
-            start_system=start_system,
-            target_system=target_system,
-            current_solution=current_point,
-            current_t=t,
-            variables=variables,
-            predictor_corrector_func=predictor_corrector_step,
-            gamma=gamma
-        )
-        
-        # Update with endgame result
-        if endgame_result.success:
-            path_info['endgame_used'] = True
-            current_point = endgame_result.solution
-            path_info['winding_number'] = endgame_result.winding_number
-            
-            if store_paths:
-                # Add endgame predictions to path points
-                for i, pred in enumerate(endgame_result.predictions):
-                    t_val = t * (cauchy_endgame.geometric_series_factor ** (i+1))
-                    path_info['path_points'].append((t_val, pred))
-                
-                # Add final point at t=0
-                path_info['path_points'].append((0.0, current_point))
-        else:
-            if store_paths:
-                print(f"Endgame failed with result: {endgame_result}")
-            
-            # If endgame failed but gave a reasonable solution, use it anyway
-            if endgame_result.ill_conditioned and endgame_result.solution is not None:
-                current_point = endgame_result.solution
-    
-    # We've reached t=0 or completed the endgame, check the solution
+    # We've reached t=0, final check for target system
     final_values = {var: val for var, val in zip(variables, current_point)}
     final_residual = np.linalg.norm(target_system.evaluate(final_values))
     
@@ -473,6 +379,7 @@ def track_single_path(start_system: PolynomialSystem,
             path_info['singular'] = True
             
     return current_point, path_info
+
 def track_paths(start_system: PolynomialSystem,
                target_system: PolynomialSystem,
                start_solutions: List[List[complex]],
@@ -480,9 +387,7 @@ def track_paths(start_system: PolynomialSystem,
                tol: float = 1e-10,
                gamma: Optional[complex] = None,
                verbose: bool = False,
-               store_paths: bool = False,
-               use_endgame: bool = True,
-               endgame_start: float = 0.1) -> Tuple[List[np.ndarray], Dict[str, Any]]:
+               store_paths: bool = False) -> Tuple[List[np.ndarray], Dict[str, Any]]:
     """Track multiple paths from start solutions to the target system.
     Args:
         start_system: Start system g(x)
@@ -492,9 +397,6 @@ def track_paths(start_system: PolynomialSystem,
         tol: Tolerance for numerical methods
         gamma: Random complex number for the homotopy (default: random)
         verbose: Whether to print progress information
-        store_paths: Whether to store path points
-        use_endgame: Whether to use the endgame strategy
-        endgame_start: t-value at which to start the endgame
         
     Returns:
         Tuple of (end_solutions, path_results)
@@ -539,9 +441,7 @@ def track_paths(start_system: PolynomialSystem,
             variables=variables,
             tol=tol,
             gamma=gamma,
-            store_paths=store_paths,
-            use_endgame=use_endgame,
-            endgame_start=endgame_start
+            store_paths=store_paths  # Add this line
         )
         
         # Store results
@@ -558,12 +458,6 @@ def track_paths(start_system: PolynomialSystem,
         elif store_paths:
             # Create a minimal path record containing start and end points
             path_results['path_points'].append([(1.0, start_sol), (0.0, end_sol)])
-        
-        # Add endgame info to path results if it was used
-        if 'endgame_used' in path_info:
-            path_results.setdefault('endgame_used', []).append(path_info['endgame_used'])
-        if 'winding_number' in path_info:
-            path_results.setdefault('winding_number', []).append(path_info['winding_number'])
         
         if verbose:
             pbar.update(1)

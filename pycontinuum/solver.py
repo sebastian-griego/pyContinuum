@@ -153,16 +153,13 @@ class SolutionSet:
         result = SolutionSet(filtered, self.system)
         result._meta = self._meta.copy()
         return result
-
 def solve(system: PolynomialSystem, 
           start_system=None,
           start_solutions=None,
           variables=None,
           tol: float = 1e-10,
           verbose: bool = False,
-          store_paths: bool = False,
-          use_endgame: bool = True,
-          endgame_start: float = 0.1) -> SolutionSet:
+          store_paths: bool = False) -> SolutionSet:
     """Solve a polynomial system using homotopy continuation.
     Args:
         system: The polynomial system to solve
@@ -171,9 +168,6 @@ def solve(system: PolynomialSystem,
         variables: Optional list of variables to use (default: extracted from system)
         tol: Tolerance for path tracking and solution classification
         verbose: Whether to print progress information
-        store_paths: Whether to store path points for visualization
-        use_endgame: Whether to use the endgame strategy for singular paths
-        endgame_start: t-value at which to start the endgame (default: 0.1)
         
     Returns:
         A SolutionSet containing all found solutions
@@ -201,6 +195,7 @@ def solve(system: PolynomialSystem,
     # Track the paths from start solutions to the target system
     if verbose:
         print(f"Tracking {len(start_solutions)} paths...")
+    
     end_solutions, path_results = track_paths(
         start_system=start_system,
         target_system=system,
@@ -208,9 +203,7 @@ def solve(system: PolynomialSystem,
         variables=variables,
         tol=tol,
         verbose=verbose,
-        store_paths=store_paths,
-        use_endgame=use_endgame,
-        endgame_start=endgame_start
+        store_paths=store_paths
     )
     # Process the raw solutions
     solutions = []
@@ -249,11 +242,12 @@ def solve(system: PolynomialSystem,
             path_index=i
         )
         
-        # Add path points to the solution if available
+        # Store path points if available
         if store_paths and path_results.get('path_points'):
             solution.path_points = path_results['path_points'][i]
         
         solutions.append(solution)
+    
     # Remove duplicate solutions
     unique_solutions = []
     for sol in solutions:
