@@ -35,6 +35,7 @@ class Solution:
         self.is_singular = is_singular
         self.path_index = path_index
         self.path_points = None  # Add this line
+        self.winding_number = None  # Add this
         
     def __repr__(self) -> str:
         """String representation of the solution."""
@@ -82,7 +83,6 @@ class SolutionSet:
     
     def __init__(self, solutions: List[Solution], system: PolynomialSystem):
         """Initialize a solution set.
-        
         Args:
             solutions: List of Solution objects
             system: The polynomial system that was solved
@@ -153,13 +153,15 @@ class SolutionSet:
         result = SolutionSet(filtered, self.system)
         result._meta = self._meta.copy()
         return result
+
 def solve(system: PolynomialSystem, 
           start_system=None,
           start_solutions=None,
           variables=None,
           tol: float = 1e-10,
           verbose: bool = False,
-          store_paths: bool = False) -> SolutionSet:
+          store_paths: bool = False,
+          use_endgame: bool = True) -> SolutionSet:
     """Solve a polynomial system using homotopy continuation.
     Args:
         system: The polynomial system to solve
@@ -168,6 +170,8 @@ def solve(system: PolynomialSystem,
         variables: Optional list of variables to use (default: extracted from system)
         tol: Tolerance for path tracking and solution classification
         verbose: Whether to print progress information
+        store_paths: Whether to store path tracking points
+        use_endgame: Whether to use endgame methods for singular solutions
         
     Returns:
         A SolutionSet containing all found solutions
@@ -203,7 +207,8 @@ def solve(system: PolynomialSystem,
         variables=variables,
         tol=tol,
         verbose=verbose,
-        store_paths=store_paths
+        store_paths=store_paths,
+        use_endgame=use_endgame
     )
     # Process the raw solutions
     solutions = []
@@ -218,7 +223,6 @@ def solve(system: PolynomialSystem,
     # Process each end solution
     successful_paths = 0
     failed_paths = 0
-    
     for i, (endpoint, success, is_singular) in enumerate(zip(end_solutions, path_results['success'], path_results['singular'])):
         if not success:
             failed_paths += 1
@@ -242,12 +246,17 @@ def solve(system: PolynomialSystem,
             path_index=i
         )
         
+        # NEW CODE: Check if endgame was used and update the solution
+        if 'endgame_used' in path_results and path_results['endgame_used'][i]:
+            solution.is_singular = True
+            if 'winding_number' in path_results and path_results['winding_number'][i]:
+                solution.winding_number = path_results['winding_number'][i]
+        
         # Store path points if available
         if store_paths and path_results.get('path_points'):
             solution.path_points = path_results['path_points'][i]
         
         solutions.append(solution)
-    
     # Remove duplicate solutions
     unique_solutions = []
     for sol in solutions:
@@ -260,9 +269,20 @@ def solve(system: PolynomialSystem,
                 dist += abs(sol.values[var] - existing_sol.values[var])**2
             dist = np.sqrt(dist)
             
-            if dist < 10 * tol:
-                is_duplicate = True
-                break
+            # More aggressive deduplication for singular solutions
+            if sol.is_singular and existing_sol.is_singular:
+                # If both are singular, use a larger tolerance
+                if dist < 1e-3:  # Much larger tolerance for singular solutions
+                    is_duplicate = True
+                    # Update multiplicity/winding number if needed
+                    if hasattr(existing_sol, 'winding_number'):
+                        existing_sol.winding_number += sol.winding_number
+                    break
+            else:
+                # Regular tolerance for non-singular solutions
+                if dist < 10 * tol:
+                    is_duplicate = True
+                    break
                 
         if not is_duplicate:
             unique_solutions.append(sol)

@@ -13,6 +13,7 @@ from tqdm.auto import tqdm
 from pycontinuum.polynomial import Variable, Polynomial, PolynomialSystem
 
 
+
 def evaluate_system_at_point(system: PolynomialSystem, 
                              point: List[complex], 
                              variables: List[Variable]) -> np.ndarray:
@@ -227,7 +228,6 @@ def compute_tangent(start_system: PolynomialSystem,
         tangent = tangent / norm
         
     return tangent
-
 def track_single_path(start_system: PolynomialSystem,
                      target_system: PolynomialSystem,
                      start_solution: np.ndarray,
@@ -237,7 +237,10 @@ def track_single_path(start_system: PolynomialSystem,
                      max_step_size: float = 0.1,
                      gamma: complex = 0.6+0.8j,
                      endgame_start: float = 0.1,
-                     store_paths: bool = False) -> Tuple[np.ndarray, Dict[str, Any]]:
+                     store_paths: bool = False,
+                     use_endgame: bool = True,
+                     verbose: bool = False,
+                     debug: bool = False) -> Tuple[np.ndarray, Dict[str, Any]]:
     """Track a single path from start_solution (t=1) to the target system (t=0).
     Args:
         start_system: Start system g(x)
@@ -250,6 +253,7 @@ def track_single_path(start_system: PolynomialSystem,
         gamma: Random complex number for the homotopy
         endgame_start: t-value at which to start the endgame
         store_paths: Whether to store path points and print detailed progress
+        use_endgame: Whether to use the endgame for singular endpoints
         
     Returns:
         Tuple of (end_solution, path_info)
@@ -271,6 +275,56 @@ def track_single_path(start_system: PolynomialSystem,
     # Use a simple continuation method to track the path
     while t > 0:
         path_info['steps'] += 1
+        
+        # Check if we should switch to endgame
+        if use_endgame and t <= endgame_start:
+            # Import here to avoid circular import
+            from pycontinuum.endgame import run_cauchy_endgame
+            # Check if path might be approaching a singular point
+            # by examining Jacobian condition number
+            jac = evaluate_jacobian_at_point(target_system, current_point, variables)
+            
+            try:
+                cond = np.linalg.cond(jac)
+                if verbose and debug:  # Only print if both verbose and debug are true
+                    print(f"Jacobian condition at t={t}: {cond}")
+                might_be_singular = cond > 1e3
+                if might_be_singular and verbose:
+                    print("Potential singularity detected!")
+            except np.linalg.LinAlgError:
+                if verbose:
+                    print("Singular Jacobian detected!")
+                might_be_singular = True
+            if might_be_singular:
+                # Switch to Cauchy endgame
+                if store_paths or verbose:
+                    print(f"Switching to Cauchy endgame at t={t}")
+                
+                # Run the endgame
+                endgame_options = {
+                    'abstol': tol,
+                    'geometric_series_factor': 0.5,
+                    'gamma': gamma
+                }
+                
+                end_point, endgame_info = run_cauchy_endgame(
+                    start_system, target_system, current_point, t, 
+                    variables, endgame_options
+                )
+                
+                # Update path info with endgame results
+                path_info['success'] = endgame_info['success']
+                path_info['singular'] = True
+                path_info['endgame_used'] = True
+                path_info['winding_number'] = endgame_info['winding_number']
+                
+                # Store path points if requested
+                if store_paths and endgame_info.get('predictions'):
+                    for i, pred in enumerate(endgame_info['predictions']):
+                        # Use a small decreasing t value for predictions
+                        path_info['path_points'].append((t * (0.5 ** (i+1)), pred))
+                
+                return end_point, path_info
         
         # Reduce step size for the final approach
         if t < endgame_start and step_size > min_step_size:
@@ -364,7 +418,6 @@ def track_single_path(start_system: PolynomialSystem,
     # We've reached t=0, final check for target system
     final_values = {var: val for var, val in zip(variables, current_point)}
     final_residual = np.linalg.norm(target_system.evaluate(final_values))
-    
     if final_residual < 100 * tol:
         path_info['success'] = True
         
@@ -373,9 +426,15 @@ def track_single_path(start_system: PolynomialSystem,
         try:
             # Try to compute the condition number of the Jacobian
             cond = np.linalg.cond(jac)
-            path_info['singular'] = cond > 1e8  # Condition number threshold for singularity
+            if verbose and debug:  # Only print if both verbose and debug are true
+                print(f"Jacobian condition at t={t}: {cond}")
+            might_be_singular = cond > 1e8
+            if might_be_singular and verbose:
+                print("Potential singularity detected!")
+            path_info['singular'] = might_be_singular  # Condition number threshold for singularity
         except np.linalg.LinAlgError:
-            # If LinAlgError occurs, the Jacobian is singular
+            if verbose:
+                print("Singular Jacobian detected!")
             path_info['singular'] = True
             
     return current_point, path_info
@@ -387,7 +446,8 @@ def track_paths(start_system: PolynomialSystem,
                tol: float = 1e-10,
                gamma: Optional[complex] = None,
                verbose: bool = False,
-               store_paths: bool = False) -> Tuple[List[np.ndarray], Dict[str, Any]]:
+               store_paths: bool = False,
+               use_endgame: bool = True) -> Tuple[List[np.ndarray], Dict[str, Any]]:
     """Track multiple paths from start solutions to the target system.
     Args:
         start_system: Start system g(x)
@@ -397,6 +457,8 @@ def track_paths(start_system: PolynomialSystem,
         tol: Tolerance for numerical methods
         gamma: Random complex number for the homotopy (default: random)
         verbose: Whether to print progress information
+        store_paths: Whether to store path tracking points
+        use_endgame: Whether to use endgame methods for singular solutions
         
     Returns:
         Tuple of (end_solutions, path_results)
@@ -414,7 +476,9 @@ def track_paths(start_system: PolynomialSystem,
         'singular': [],
         'steps': [],
         'newton_iters': [],
-        'path_points': [] if store_paths else None
+        'path_points': [] if store_paths else None,
+        'endgame_used': [],  # NEW
+        'winding_number': []  # NEW
     }
     
     # Track each path in parallel (in the future this could be parallel)
@@ -441,7 +505,10 @@ def track_paths(start_system: PolynomialSystem,
             variables=variables,
             tol=tol,
             gamma=gamma,
-            store_paths=store_paths  # Add this line
+            store_paths=store_paths,
+            use_endgame=use_endgame,
+            verbose=verbose,
+            debug=False  # Default to no debug output
         )
         
         # Store results
@@ -450,6 +517,8 @@ def track_paths(start_system: PolynomialSystem,
         path_results['singular'].append(path_info.get('singular', False))
         path_results['steps'].append(path_info['steps'])
         path_results['newton_iters'].append(path_info['newton_iters'])
+        path_results['endgame_used'].append(path_info.get('endgame_used', False))
+        path_results['winding_number'].append(path_info.get('winding_number', None))
         
         # If we want to store paths and path_info has path_points
         if store_paths and 'path_points' in path_info:

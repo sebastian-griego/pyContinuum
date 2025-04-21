@@ -300,16 +300,20 @@ class Polynomial:
         if not self.terms:
             return "0"
         
-        term_strs = []
+        term_strs: List[str] = []
         for i, term in enumerate(self.terms):
             if i == 0:
                 term_strs.append(str(term))
             else:
                 if term.coefficient > 0:
+                    # + always gets a space after it
                     term_strs.append(f"+ {term}")
                 else:
-                    # If coefficient is negative, the minus sign is included in the term repr
-                    term_strs.append(f"{term}")
+                    # negative: strip the leading "-" from str(term) and
+                    # then prepend "- " so we get " - foo" instead of "-foo"
+                    s = str(term)
+                    assert s.startswith("-"), "unexpected repr for negative term"
+                    term_strs.append(f"- {s[1:]}")
         
         return " ".join(term_strs)
     
