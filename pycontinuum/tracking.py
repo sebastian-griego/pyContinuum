@@ -12,6 +12,36 @@ from tqdm.auto import tqdm
 
 from pycontinuum.polynomial import Variable, Polynomial, PolynomialSystem
 
+def check_singularity(target_system, current_point, variables, threshold, verbose=False, debug=False):
+    """
+    Check if the Jacobian at the current point is singular using a given threshold.
+    
+    Args:
+        target_system: The target polynomial system.
+        current_point: The current point on the path.
+        variables: List of variables in the system.
+        threshold: The condition number threshold for singularity.
+        verbose: Whether to print verbose output.
+        debug: Whether to print debug information.
+        
+    Returns:
+        True if the Jacobian condition number exceeds the threshold, or if the Jacobian is singular.
+        False otherwise.
+    """
+    jac = evaluate_jacobian_at_point(target_system, current_point, variables)
+    try:
+        cond = np.linalg.cond(jac)
+        if verbose and debug:
+            print(f"Jacobian condition: {cond}")
+        if cond > threshold:
+            if verbose:
+                print("Potential singularity detected!")
+            return True
+        return False
+    except np.linalg.LinAlgError:
+        if verbose:
+            print("Singular Jacobian detected!")
+        return True
 
 
 def evaluate_system_at_point(system: PolynomialSystem, 
@@ -282,19 +312,10 @@ def track_single_path(start_system: PolynomialSystem,
             from pycontinuum.endgame import run_cauchy_endgame
             # Check if path might be approaching a singular point
             # by examining Jacobian condition number
-            jac = evaluate_jacobian_at_point(target_system, current_point, variables)
             
-            try:
-                cond = np.linalg.cond(jac)
-                if verbose and debug:  # Only print if both verbose and debug are true
-                    print(f"Jacobian condition at t={t}: {cond}")
-                might_be_singular = cond > 1e3
-                if might_be_singular and verbose:
-                    print("Potential singularity detected!")
-            except np.linalg.LinAlgError:
-                if verbose:
-                    print("Singular Jacobian detected!")
-                might_be_singular = True
+            might_be_singular = check_singularity(target_system, current_point, variables, threshold=1e3, verbose=verbose, debug=debug)
+
+            
             if might_be_singular:
                 # Switch to Cauchy endgame
                 if store_paths or verbose:
@@ -317,6 +338,14 @@ def track_single_path(start_system: PolynomialSystem,
                 path_info['singular'] = True
                 path_info['endgame_used'] = True
                 path_info['winding_number'] = endgame_info['winding_number']
+                
+                # Check residual of the endgame solution
+                end_values = {var: val for var, val in zip(variables, end_point)}
+                end_residual = np.linalg.norm(target_system.evaluate(end_values))
+                
+                # If residual is small enough, mark as success
+                if end_residual < 100 * tol:
+                    path_info['success'] = True
                 
                 # Store path points if requested
                 if store_paths and endgame_info.get('predictions'):
@@ -421,21 +450,8 @@ def track_single_path(start_system: PolynomialSystem,
     if final_residual < 100 * tol:
         path_info['success'] = True
         
-        # Check if the solution is singular by examining the Jacobian
-        jac = evaluate_jacobian_at_point(target_system, current_point, variables)
-        try:
-            # Try to compute the condition number of the Jacobian
-            cond = np.linalg.cond(jac)
-            if verbose and debug:  # Only print if both verbose and debug are true
-                print(f"Jacobian condition at t={t}: {cond}")
-            might_be_singular = cond > 1e8
-            if might_be_singular and verbose:
-                print("Potential singularity detected!")
-            path_info['singular'] = might_be_singular  # Condition number threshold for singularity
-        except np.linalg.LinAlgError:
-            if verbose:
-                print("Singular Jacobian detected!")
-            path_info['singular'] = True
+        path_info['singular'] = check_singularity(target_system, current_point, variables, threshold=1e8, verbose=verbose, debug=debug)
+
             
     return current_point, path_info
 

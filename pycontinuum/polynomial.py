@@ -32,9 +32,9 @@ class Variable:
     def __hash__(self):
         return hash(self.name)
     
-    def __pow__(self, exponent: int) -> "Monomial":
-        """Raise the variable to a power, creating a monomial."""
-        return Monomial({self: exponent})
+    def __pow__(self, exponent: int) -> "Polynomial":
+        """Raise the variable to a power, creating a polynomial."""
+        return Polynomial([Monomial({self: exponent})])
     
     def __mul__(self, other: Any) -> Union["Polynomial", "Monomial"]:
         """Multiply the variable by another object."""
@@ -241,6 +241,14 @@ class Monomial:
             new_vars[var] = exp - 1
             
         return Monomial(new_vars, coefficient=new_coef)
+    
+    def as_polynomial(self) -> "Polynomial":
+        """Convert this monomial to a polynomial."""
+        return Polynomial([self])
+    
+    def variables(self) -> Set[Variable]:
+        """Get the set of variables in this monomial."""
+        return set(self.variables.keys())
 
 
 class Polynomial:
@@ -455,13 +463,17 @@ class Polynomial:
 class PolynomialSystem:
     """Representation of a system of polynomial equations."""
     
-    def __init__(self, equations: List[Polynomial]):
-        """Initialize a polynomial system from a list of equations.
-        
-        Args:
-            equations: List of polynomials that make up the system
-        """
-        self.equations = equations
+    def __init__(self, equations: List[Union[Polynomial, Monomial, Variable]]):
+        """Initialize a polynomial system from a list of equations."""
+        self.equations = []
+        for eq in equations:
+            if isinstance(eq, Polynomial):
+                self.equations.append(eq)
+            elif isinstance(eq, (Monomial, Variable)):
+                # Convert Monomial or Variable to Polynomial
+                self.equations.append(Polynomial([eq]))
+            else:
+                raise TypeError(f"Unsupported equation type: {type(eq)}")
     
     def __repr__(self) -> str:
         return "\n".join([f"{i}: {eq}" for i, eq in enumerate(self.equations)])
@@ -478,7 +490,6 @@ class PolynomialSystem:
         
         Args:
             values: Dict mapping variables to their values
-            
         Returns:
             List of evaluated values for each equation
         """
@@ -515,3 +526,31 @@ def polyvar(*names: str) -> Union[Variable, Tuple[Variable, ...]]:
     """
     variables = tuple(Variable(name) for name in names)
     return variables[0] if len(variables) == 1 else variables
+
+
+def make_system(*equations) -> "PolynomialSystem":
+    """Create a polynomial system from various types of equations.
+    
+    Args:
+        *equations: Polynomial equations to include in the system
+        
+    Returns:
+        A PolynomialSystem object containing the processed equations
+        
+    Raises:
+        TypeError: If an equation cannot be converted to a Polynomial
+    """
+    processed_equations = []
+    for eq in equations:
+        if isinstance(eq, Polynomial):
+            processed_equations.append(eq)
+        elif isinstance(eq, (Monomial, Variable)):
+            processed_equations.append(Polynomial([eq]))
+        else:
+            try:
+                # Try to convert to Polynomial if it's not already one
+                processed_equations.append(Polynomial([eq]))
+            except TypeError:
+                raise TypeError(f"Cannot convert {type(eq)} to polynomial equation")
+    
+    return PolynomialSystem(processed_equations)
