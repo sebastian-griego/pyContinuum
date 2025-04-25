@@ -12,6 +12,7 @@ from typing import Dict, List, Tuple, Optional, Any, Union, Callable
 from enum import Enum
 
 from pycontinuum.polynomial import Variable, PolynomialSystem
+# Import utility functions
 from pycontinuum.utils import (
     evaluate_system_at_point,
     evaluate_jacobian_at_point,

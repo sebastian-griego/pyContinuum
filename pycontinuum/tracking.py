@@ -11,6 +11,13 @@ import time
 from tqdm.auto import tqdm
 
 from pycontinuum.polynomial import Variable, Polynomial, PolynomialSystem
+# Import utility functions
+from pycontinuum.utils import (
+    evaluate_system_at_point,
+    evaluate_jacobian_at_point,
+    newton_corrector
+)
+from pycontinuum.endgame import run_cauchy_endgame
 
 def check_singularity(target_system, current_point, variables, threshold, verbose=False, debug=False):
     """
@@ -456,49 +463,35 @@ def track_single_path(start_system: PolynomialSystem,
     return current_point, path_info
 
 def track_paths(start_system: PolynomialSystem,
-               target_system: PolynomialSystem,
-               start_solutions: List[List[complex]],
-               variables: List[Variable],
-               tol: float = 1e-10,
-               gamma: Optional[complex] = None,
-               verbose: bool = False,
-               store_paths: bool = False,
-               use_endgame: bool = True) -> Tuple[List[np.ndarray], Dict[str, Any]]:
-    """Track multiple paths from start solutions to the target system.
+                target_system: PolynomialSystem,
+                start_solutions: List[List[complex]],
+                variables: List[Variable],
+                tol: float = 1e-8,
+                verbose: bool = False,
+                store_paths: bool = False,
+                use_endgame: bool = True,
+                endgame_options: Optional[Dict[str, Any]] = None) -> Tuple[List[np.ndarray], List[Dict[str, Any]]]:
+    """Track solution paths from start solutions to the target system.
+    
     Args:
-        start_system: Start system g(x)
-        target_system: Target system f(x)
-        start_solutions: List of solutions to the start system
-        variables: System variables
-        tol: Tolerance for numerical methods
-        gamma: Random complex number for the homotopy (default: random)
-        verbose: Whether to print progress information
-        store_paths: Whether to store path tracking points
-        use_endgame: Whether to use endgame methods for singular solutions
+        start_system: The start polynomial system.
+        target_system: The target polynomial system.
+        start_solutions: List of start solution vectors.
+        variables: List of variables in the system.
+        tol: Tolerance for convergence of the corrector.
+        verbose: Whether to print progress information.
+        store_paths: Whether to store all points along each path.
+        use_endgame: Whether to use the endgame procedure near t=0.
+        endgame_options: Optional dictionary of options for the endgame procedure.
         
     Returns:
-        Tuple of (end_solutions, path_results)
+        Tuple of (end_solutions, path_results).
+        end_solutions: List of final points for each path.
+        path_results: List of dictionaries containing result info for each path.
     """
-    # Use a fixed random gamma if not provided
-    if gamma is None:
-        # Use a random complex number with unit magnitude for gamma
-        rand_angle = np.random.uniform(0, 2 * np.pi)
-        gamma = np.exp(1j * rand_angle)
-    
-    # Initialize result containers
-    end_solutions = []
-    path_results = {
-        'success': [],
-        'singular': [],
-        'steps': [],
-        'newton_iters': [],
-        'path_points': [] if store_paths else None,
-        'endgame_used': [],  # NEW
-        'winding_number': []  # NEW
-    }
-    
-    # Track each path in parallel (in the future this could be parallel)
     n_paths = len(start_solutions)
+    end_solutions: List[np.ndarray] = []
+    path_results: List[Dict[str, Any]] = []
     
     if verbose:
         print(f"Tracking {n_paths} paths from t=1 to t=0...")
@@ -520,35 +513,34 @@ def track_paths(start_system: PolynomialSystem,
             start_solution=start_sol,
             variables=variables,
             tol=tol,
-            gamma=gamma,
             store_paths=store_paths,
             use_endgame=use_endgame,
             verbose=verbose,
             debug=False  # Default to no debug output
         )
         
+        # If using endgame, apply it
+        if use_endgame:
+            final_point, endgame_info = run_cauchy_endgame(
+                start_system=start_system,
+                target_system=target_system,
+                point=end_sol,
+                t=0.0,  # Pass the current t value
+                variables=variables,
+                options=endgame_options  # Pass the options here
+            )
+            end_sol = final_point
+            path_info.update(endgame_info)
+        
         # Store results
         end_solutions.append(end_sol)
-        path_results['success'].append(path_info['success'])
-        path_results['singular'].append(path_info.get('singular', False))
-        path_results['steps'].append(path_info['steps'])
-        path_results['newton_iters'].append(path_info['newton_iters'])
-        path_results['endgame_used'].append(path_info.get('endgame_used', False))
-        path_results['winding_number'].append(path_info.get('winding_number', None))
-        
-        # If we want to store paths and path_info has path_points
-        if store_paths and 'path_points' in path_info:
-            path_results['path_points'].append(path_info['path_points'])
-        # If we need to add it manually
-        elif store_paths:
-            # Create a minimal path record containing start and end points
-            path_results['path_points'].append([(1.0, start_sol), (0.0, end_sol)])
+        path_results.append(path_info)
         
         if verbose:
             pbar.update(1)
     if verbose:
         pbar.close()
-        success_count = sum(path_results['success'])
+        success_count = sum(info['success'] for info in path_results)
         print(f"Path tracking complete: {success_count}/{n_paths} successful paths")
         
     return end_solutions, path_results

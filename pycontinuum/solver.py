@@ -77,6 +77,13 @@ class Solution:
         """
         return self.is_real(tol) and all(val.real > -tol for val in self.values.values())
     
+    def distance(self, other: 'Solution', variables: List[Variable]) -> float:
+        """Compute the Euclidean distance between this solution and another."""
+        dist_sq = 0
+        for var in variables:
+            dist_sq += abs(self.values.get(var, 0) - other.values.get(var, 0))**2
+        return np.sqrt(dist_sq)
+
 
 class SolutionSet:
     """Class representing a set of solutions to a polynomial system."""
@@ -161,7 +168,10 @@ def solve(system: PolynomialSystem,
           tol: float = 1e-10,
           verbose: bool = False,
           store_paths: bool = False,
-          use_endgame: bool = True) -> SolutionSet:
+          use_endgame: bool = True,
+          endgame_options: Optional[Dict[str, Any]] = None,
+          deduplication_tol_factor: float = 10.0,
+          singular_deduplication_tol: float = 1e-3) -> SolutionSet:
     """Solve a polynomial system using homotopy continuation.
     Args:
         system: The polynomial system to solve
@@ -172,6 +182,9 @@ def solve(system: PolynomialSystem,
         verbose: Whether to print progress information
         store_paths: Whether to store path tracking points
         use_endgame: Whether to use endgame methods for singular solutions
+        endgame_options: Optional dictionary of options for the endgame procedure
+        deduplication_tol_factor: Factor multiplied by `tol` for regular solution deduplication.
+        singular_deduplication_tol: Absolute tolerance for singular solution deduplication.
         
     Returns:
         A SolutionSet containing all found solutions
@@ -208,10 +221,11 @@ def solve(system: PolynomialSystem,
         tol=tol,
         verbose=verbose,
         store_paths=store_paths,
-        use_endgame=use_endgame
+        use_endgame=use_endgame,
+        endgame_options=endgame_options
     )
     # Process the raw solutions
-    solutions = []
+    raw_solutions = []
     
     if verbose:
         print("Processing and classifying solutions...")
@@ -220,84 +234,102 @@ def solve(system: PolynomialSystem,
     def compute_residual(sol_values):
         return np.linalg.norm(system.evaluate(sol_values))
     
-    # Process each end solution
+    # Process each end solution and its path result info
     successful_paths = 0
     failed_paths = 0
-    for i, (endpoint, success, is_singular) in enumerate(zip(end_solutions, path_results['success'], path_results['singular'])):
-        if not success:
-            failed_paths += 1
-            continue
-            
+
+    # path_results should now be a list of dictionaries, one for each path
+    # Each dict contains keys like 'success', 'singular', 'endgame_used', 'winding_number', 'predictions', etc.
+    for i, path_result_info in enumerate(path_results):
+        endpoint = end_solutions[i] # Get the endpoint corresponding to this path result
+
+        # Check if the path was successful (either tracker reached t=0 or endgame succeeded)
+        if not path_result_info.get('success', False):
+             failed_paths += 1
+             continue
+
         successful_paths += 1
-        
+
+        # Use the final point from the path or endgame prediction
+        final_point = np.array(path_result_info.get('final_point', endpoint), dtype=complex) # Assume track_paths adds 'final_point'
+
         # Create Solution object
-        solution_dict = {var: val for var, val in zip(variables, endpoint)}
+        solution_dict = {var: val for var, val in zip(variables, final_point)}
         residual = compute_residual(solution_dict)
-        
-        # Skip solutions with large residuals
-        if residual > 100 * tol:
-            failed_paths += 1
-            continue
-            
+
+        # Skip solutions with large residuals (adjust tolerance if endgame was used?)
+        # Maybe the endgame success check is sufficient, but keeping this as a safeguard
+        if residual > 100 * tol: # Consider a different tolerance if endgame was used
+             if verbose:
+                 print(f"Skipping solution from path {i} due to large residual ({residual:.2e})")
+             failed_paths += 1 # Count as failed path if residual is too high
+             continue
+
+        # Determine singularity status and winding number from path_result_info
+        is_singular = path_result_info.get('singular', False)
+        winding_number = path_result_info.get('winding_number', None)
+
         solution = Solution(
             values=solution_dict,
             residual=residual,
             is_singular=is_singular,
             path_index=i
         )
-        
-        # NEW CODE: Check if endgame was used and update the solution
-        if 'endgame_used' in path_results and path_results['endgame_used'][i]:
-            solution.is_singular = True
-            if 'winding_number' in path_results and path_results['winding_number'][i]:
-                solution.winding_number = path_results['winding_number'][i]
-        
+
+        # Store winding number if available
+        if winding_number is not None:
+             solution.winding_number = winding_number
+
         # Store path points if available
-        if store_paths and path_results.get('path_points'):
-            solution.path_points = path_results['path_points'][i]
-        
-        solutions.append(solution)
-    # Remove duplicate solutions
+        if store_paths and path_result_info.get('path_points'): # Access path_points from the specific path's result info
+            solution.path_points = path_result_info['path_points']
+
+        raw_solutions.append(solution)
+
+    # Remove duplicate solutions using a proximity-based grouping
     unique_solutions = []
-    for sol in solutions:
-        # Check if this solution is already in our list
+    # Use a list to store representatives of unique solutions found so far
+    unique_representatives: List[Solution] = []
+
+    # Define tolerances based on input args
+    regular_tol = tol * deduplication_tol_factor
+    singular_tol = singular_deduplication_tol # Use the new specific tolerance
+
+    if verbose:
+        print(f"Attempting to deduplicate {len(raw_solutions)} raw solutions...")
+
+    for sol in raw_solutions:
         is_duplicate = False
-        for existing_sol in unique_solutions:
-            # Compute distance between solutions
-            dist = 0
-            for var in variables:
-                dist += abs(sol.values[var] - existing_sol.values[var])**2
-            dist = np.sqrt(dist)
-            
-            # More aggressive deduplication for singular solutions
-            if sol.is_singular and existing_sol.is_singular:
-                # If both are singular, use a larger tolerance
-                if dist < 1e-3:  # Much larger tolerance for singular solutions
-                    is_duplicate = True
-                    # Update multiplicity/winding number if needed
-                    if hasattr(existing_sol, 'winding_number'):
-                        existing_sol.winding_number += sol.winding_number
-                    break
-            else:
-                # Regular tolerance for non-singular solutions
-                if dist < 10 * tol:
-                    is_duplicate = True
-                    break
-                
+        # Check against existing unique representatives
+        for existing_sol in unique_representatives:
+            dist = sol.distance(existing_sol, variables)
+
+            # Use different tolerances for singular vs. regular solutions
+            current_tol = singular_tol if sol.is_singular and existing_sol.is_singular else regular_tol
+
+            if dist < current_tol:
+                is_duplicate = True
+                # Optional: If singular, combine winding numbers or other properties
+                # if sol.is_singular and existing_sol.is_singular and hasattr(existing_sol, 'winding_number'):
+                #     existing_sol.winding_number = (existing_sol.winding_number or 0) + (sol.winding_number or 0)
+                break
+
         if not is_duplicate:
             unique_solutions.append(sol)
-    
+            unique_representatives.append(sol) # Add this solution as a new representative
+
     # Create the result
     result = SolutionSet(unique_solutions, system)
     
     # Add metadata
     result._meta['total_paths'] = len(start_solutions)
     result._meta['successful_paths'] = successful_paths
-    result._meta['failed_paths'] = failed_paths
+    result._meta['failed_paths'] = failed_paths # This now includes paths skipped due to high residual
     result._meta['solve_time'] = time.time() - start_time
+    result._meta['raw_solutions_found'] = len(raw_solutions) # Count of solutions *before* deduplication but *after* residual check
     
     if verbose:
-        print(f"Found {len(unique_solutions)} distinct solutions")
+        print(f"Found {len(unique_solutions)} distinct solutions (from {len(raw_solutions)} raw solutions)")
         print(f"Solution process completed in {result._meta['solve_time']:.2f} seconds")
     
     return result

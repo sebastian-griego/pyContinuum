@@ -255,54 +255,50 @@ class Polynomial:
     """Representation of a multivariate polynomial."""
     
     def __init__(self, terms: List[Union[Monomial, Variable, int, float, complex]]):
-        """Initialize a polynomial from a list of terms.
-        
-        Args:
-            terms: List of monomials, variables, or constants
-        """
-        self.terms = []
+        """Initialize a polynomial from a list of terms."""
+        processed_terms = []
         for term in terms:
             if isinstance(term, Monomial):
-                self.terms.append(term)
+                processed_terms.append(term)
             elif isinstance(term, Variable):
-                self.terms.append(Monomial({term: 1}))
+                processed_terms.append(Monomial({term: 1}))
             elif isinstance(term, (int, float, complex)):
-                self.terms.append(Monomial({}, coefficient=term))
+                processed_terms.append(Monomial({}, coefficient=complex(term)))
             else:
                 raise TypeError(f"Unsupported term type: {type(term)}")
-        
-        self._combine_like_terms()
+
+        # Combine like terms immediately upon initialization
+        self.terms = self._combine_like_terms(processed_terms)
     
-    def _combine_like_terms(self):
-        """Combine like terms in the polynomial."""
-        term_dict = {}
-        for term in self.terms:
-            # Create a hashable key from the variables and exponents
-            key = tuple(sorted((var.name, exp) for var, exp in term.variables.items()))
-            if key in term_dict:
-                term_dict[key] += term.coefficient
+    def _combine_like_terms(self, terms: List[Monomial]) -> List[Monomial]:
+        """Combine terms with the same variable exponents."""
+        # Use a dictionary to group terms by their variable exponents (as a tuple of tuples)
+        term_dict: Dict[Tuple[Tuple[Variable, int], ...], complex] = {}
+
+        for term in terms:
+            # Create a hashable representation of the variables and exponents
+            # Sort the variable items for consistent keys
+            var_key = tuple(sorted(term.variables.items(), key=lambda item: item[0].name))
+
+            if var_key in term_dict:
+                term_dict[var_key] += term.coefficient
             else:
-                term_dict[key] = term.coefficient
-        
-        # Rebuild terms from the combined coefficients
-        self.terms = []
-        for key, coef in term_dict.items():
-            if abs(coef) > 1e-15:  # Avoid floating point noise
-                var_dict = {}
-                for var_name, exp in key:
-                    # Recreate the Variable object - this is why we need to be careful with equality
-                    for term in self.terms:
-                        for var in term.variables:
-                            if var.name == var_name:
-                                var_dict[var] = exp
-                                break
-                        else:
-                            continue
-                        break
-                    else:
-                        # If we didn't find the variable in existing terms, create a new one
-                        var_dict[Variable(var_name)] = exp
-                self.terms.append(Monomial(var_dict, coefficient=coef))
+                term_dict[var_key] = term.coefficient
+
+        # Create new Monomial objects from the combined terms, filtering out zero coefficients
+        combined_terms = []
+        for var_key, coef in term_dict.items():
+            if abs(coef) > 1e-15:  # Use a small tolerance for floating point zeros
+                # Convert the tuple key back to a dictionary
+                variables_dict = dict(var_key)
+                combined_terms.append(Monomial(variables_dict, coefficient=coef))
+
+        # Optionally sort terms for consistent representation (e.g., by total degree, then lexicographically)
+        # This is not strictly necessary for correctness but makes debugging easier.
+        # A simple sort by string representation of variables might suffice for now.
+        combined_terms.sort(key=lambda m: repr(m.variables)) # Simple sort key
+
+        return combined_terms
     
     def __repr__(self) -> str:
         if not self.terms:
@@ -313,7 +309,7 @@ class Polynomial:
             if i == 0:
                 term_strs.append(str(term))
             else:
-                if term.coefficient > 0:
+                if term.coefficient.real > 0:
                     # + always gets a space after it
                     term_strs.append(f"+ {term}")
                 else:
