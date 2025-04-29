@@ -16,7 +16,7 @@ from pycontinuum.tracking import track_paths
 
 class Solution:
     """Class representing a solution to a polynomial system."""
-    
+
     def __init__(self, 
                  values: Dict[Variable, complex],
                  residual: float,
@@ -34,38 +34,46 @@ class Solution:
         self.residual = residual
         self.is_singular = is_singular
         self.path_index = path_index
-        self.path_points = None  # Add this line
-        self.winding_number = None  # Add this
-        
+        self.path_points = None
+        self.winding_number = None
+
     def __repr__(self) -> str:
-        """String representation of the solution."""
+        """String representation of the single solution."""
         status = "singular" if self.is_singular else "regular"
         var_strs = []
-        
+
         # Sort variables by name for consistent output
-        sorted_vars = sorted(self.values.keys(), key=lambda v: v.name)
-        
+        if hasattr(self, 'values') and isinstance(self.values, dict):
+            sorted_vars = sorted(self.values.keys(), key=lambda v: v.name if hasattr(v, 'name') else '')
+        else:
+            return f"Solution object (incomplete data)"
+
         for var in sorted_vars:
             val = self.values[var]
-            # Format complex numbers nicely
-            if abs(val.imag) < 1e-10:  # Small imaginary part, treat as real
+            if abs(val.imag) < 1e-10:
                 var_strs.append(f"{var.name} = {val.real:.8g}")
             else:
-                var_strs.append(f"{var.name} = {val.real:.8g} + {val.imag:.8g}j")
-                
-        return f"Solution ({status}, residual={self.residual:.2e}):\n  " + "\n  ".join(var_strs)
-    
+                sign = '+' if val.imag >= 0 else '-'
+                var_strs.append(f"{var.name} = {val.real:.8g} {sign} {abs(val.imag):.8g}j")
+
+        # Ensure self.residual exists before formatting
+        residual_str = f"{self.residual:.2e}" if hasattr(self, 'residual') else 'N/A'
+        return f"Solution ({status}, residual={residual_str}):\n  " + "\n  ".join(var_strs)
+
     def is_real(self, tol: float = 1e-10) -> bool:
         """Check if the solution is real (all imaginary parts close to zero).
-        
+
         Args:
             tol: Tolerance for imaginary parts
-            
+
         Returns:
             True if all values have imaginary parts less than tol
         """
+        # Check if self.values exists before iterating
+        if not hasattr(self, 'values') or not isinstance(self.values, dict):
+            return False
         return all(abs(val.imag) < tol for val in self.values.values())
-    
+
     def is_positive(self, tol: float = 1e-10) -> bool:
         """Check if the solution is positive real.
         
@@ -75,15 +83,23 @@ class Solution:
         Returns:
             True if solution is real and all values have positive real parts
         """
-        return self.is_real(tol) and all(val.real > -tol for val in self.values.values())
-    
+        # Check if self.values exists before iterating
+        if not hasattr(self, 'values') or not isinstance(self.values, dict):
+            return False
+        # Ensure is_real is called correctly now
+        return self.is_real(tol=tol) and all(val.real > -tol for val in self.values.values())
+
     def distance(self, other: 'Solution', variables: List[Variable]) -> float:
         """Compute the Euclidean distance between this solution and another."""
         dist_sq = 0
+        # Check attributes exist before access
+        if not hasattr(self, 'values') or not isinstance(self.values, dict) or \
+           not hasattr(other, 'values') or not isinstance(other.values, dict):
+            return float('inf')
+
         for var in variables:
             dist_sq += abs(self.values.get(var, 0) - other.values.get(var, 0))**2
         return np.sqrt(dist_sq)
-
 
 class SolutionSet:
     """Class representing a set of solutions to a polynomial system."""
@@ -100,24 +116,41 @@ class SolutionSet:
         
     def __repr__(self) -> str:
         """String representation of the solution set."""
+        # Use default tolerance for counts in representation
         real_count = sum(1 for sol in self.solutions if sol.is_real())
         singular_count = sum(1 for sol in self.solutions if sol.is_singular)
-        
-        header = f"SolutionSet: {len(self.solutions)} solutions ({real_count} real, {singular_count} singular)"
-        
-        # If we have solve metadata, include it
-        if self._meta:
-            if 'total_paths' in self._meta:
-                header += f"\nTracked {self._meta['total_paths']} paths, found {len(self.solutions)} distinct solutions"
-            if 'solve_time' in self._meta:
-                header += f"\nSolve time: {self._meta['solve_time']:.2f} seconds"
-                
-        # If few solutions, print them all
-        if len(self.solutions) <= 5:
-            return header + "\n\n" + "\n\n".join(str(sol) for sol in self.solutions)
+
+        # Check if this set resulted from filtering
+        is_filtered = self._meta.get('is_filtered', False)
+        set_type = "Filtered SolutionSet" if is_filtered else "SolutionSet"
+
+        header = f"{set_type}: {len(self.solutions)} solutions ({real_count} real, {singular_count} singular)"
+
+        # Display metadata about the original solve process if available
+        # Avoid stating "found {len(self.solutions)}" if it's filtered, as that's confusing
+        if not is_filtered and 'total_paths' in self._meta:
+             # Only show "found N" for the original, unfiltered set
+             header += f"\n  Result of tracking {self._meta['total_paths']} paths, found {self._meta.get('raw_solutions_found', '?')} raw, {len(self.solutions)} distinct solutions after deduplication."
+        elif 'total_paths' in self._meta:
+             # For filtered sets, just mention the original tracking stats
+             header += f"\n  (Filtered from solve process that tracked {self._meta['total_paths']} paths)"
+
+        if 'solve_time' in self._meta:
+            header += f"\n  Solve time: {self._meta['solve_time']:.2f} seconds"
+        if 'successful_paths' in self._meta:
+             header += f"\n  Paths successfully tracked: {self._meta['successful_paths']}/{self._meta.get('total_paths', '?')}"
+
+        # Display solutions
+        solution_details = ""
+        if not self.solutions:
+            solution_details = "\n(No solutions in this set)"
+        elif len(self.solutions) <= 5:
+            solution_details = "\n\n" + "\n\n".join(str(sol) for sol in self.solutions)
         else:
             # Otherwise just print the first 3
-            return header + "\n\n" + "\n\n".join(str(sol) for sol in self.solutions[:3]) + "\n\n... and more"
+            solution_details = "\n\n" + "\n\n".join(str(sol) for sol in self.solutions[:3]) + "\n\n... and {} more".format(len(self.solutions) - 3)
+
+        return header + solution_details
     
     def __len__(self) -> int:
         """Get the number of solutions."""
@@ -127,38 +160,45 @@ class SolutionSet:
         """Get a solution by index."""
         return self.solutions[index]
     
-    def filter(self, 
-               real: bool = False, 
-               positive: bool = False,
+    def filter(self,
+               real: Optional[bool] = None,
+               positive: Optional[bool] = None,
+               tol: float = 1e-10,
                max_residual: Optional[float] = None,
                custom_filter: Optional[Callable[[Solution], bool]] = None) -> 'SolutionSet':
         """Filter solutions based on criteria.
-        
+
         Args:
-            real: Only include real solutions
-            positive: Only include positive real solutions
-            max_residual: Maximum residual threshold
-            custom_filter: Custom filter function taking a Solution and returning bool
-            
+            real: If True, only include real solutions. If False, only non-real. If None, no filter.
+            positive: If True, only include positive real solutions. If False, only non-positive real. If None, no filter.
+            tol: Tolerance used for real and positive checks (default: 1e-10).
+            max_residual: Maximum residual threshold.
+            custom_filter: Custom filter function taking a Solution and returning bool.
+
         Returns:
-            A new SolutionSet with filtered solutions
+            A new SolutionSet with filtered solutions.
         """
-        filtered = self.solutions.copy()
-        
-        if real:
-            filtered = [sol for sol in filtered if sol.is_real()]
-            
-        if positive:
-            filtered = [sol for sol in filtered if sol.is_positive()]
-            
+        filtered_sols = self.solutions
+
+        if real is True:
+            filtered_sols = [sol for sol in filtered_sols if sol.is_real(tol=tol)]
+        elif real is False:
+            filtered_sols = [sol for sol in filtered_sols if not sol.is_real(tol=tol)]
+
+        if positive is True:
+            filtered_sols = [sol for sol in filtered_sols if sol.is_positive(tol=tol)]
+        elif positive is False:
+            filtered_sols = [sol for sol in filtered_sols if not sol.is_positive(tol=tol)]
+
         if max_residual is not None:
-            filtered = [sol for sol in filtered if sol.residual <= max_residual]
-            
+            filtered_sols = [sol for sol in filtered_sols if sol.residual <= max_residual]
+
         if custom_filter is not None:
-            filtered = [sol for sol in filtered if custom_filter(sol)]
-            
-        result = SolutionSet(filtered, self.system)
+            filtered_sols = [sol for sol in filtered_sols if custom_filter(sol)]
+
+        result = SolutionSet(filtered_sols, self.system)
         result._meta = self._meta.copy()
+        result._meta['is_filtered'] = True
         return result
 
 def solve(system: PolynomialSystem, 
