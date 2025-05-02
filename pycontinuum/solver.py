@@ -211,7 +211,8 @@ def solve(system: PolynomialSystem,
           use_endgame: bool = True,
           endgame_options: Optional[Dict[str, Any]] = None,
           deduplication_tol_factor: float = 10.0,
-          singular_deduplication_tol: float = 1e-3) -> SolutionSet:
+          singular_deduplication_tol: float = 1e-3,
+          allow_underdetermined: bool = False) -> SolutionSet:  # Added this parameter
     """Solve a polynomial system using homotopy continuation.
     Args:
         system: The polynomial system to solve
@@ -225,6 +226,7 @@ def solve(system: PolynomialSystem,
         endgame_options: Optional dictionary of options for the endgame procedure
         deduplication_tol_factor: Factor multiplied by `tol` for regular solution deduplication.
         singular_deduplication_tol: Absolute tolerance for singular solution deduplication.
+        allow_underdetermined: Whether to allow systems with fewer equations than variables
         
     Returns:
         A SolutionSet containing all found solutions
@@ -242,7 +244,11 @@ def solve(system: PolynomialSystem,
     if start_system is None or start_solutions is None:
         if verbose:
             print("Generating total-degree start system...")
-        start_system, start_solutions = generate_total_degree_start_system(system, variables)
+            
+        # Pass allow_underdetermined parameter to start system generator
+        start_system, start_solutions = generate_total_degree_start_system(
+            system, variables, allow_underdetermined
+        )
         
         if verbose:
             degrees = system.degrees()
@@ -252,7 +258,6 @@ def solve(system: PolynomialSystem,
     # Track the paths from start solutions to the target system
     if verbose:
         print(f"Tracking {len(start_solutions)} paths...")
-    
     end_solutions, path_results = track_paths(
         start_system=start_system,
         target_system=system,

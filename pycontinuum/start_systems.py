@@ -7,12 +7,13 @@ including total-degree homotopies and other approaches.
 
 import numpy as np
 import cmath
-from typing import Dict, List, Tuple, Set, Any
+from typing import List, Tuple
 
 from pycontinuum.polynomial import Variable, Polynomial, PolynomialSystem, Monomial
 
 def generate_total_degree_start_system(target_system: PolynomialSystem, 
-                                      variables: List[Variable]) -> Tuple[PolynomialSystem, List[List[complex]]]:
+                                      variables: List[Variable],
+                                      allow_underdetermined: bool = False) -> Tuple[PolynomialSystem, List[List[complex]]]:
     """Generate a total-degree start system and its solutions.
     
     This creates a decoupled system where each equation has the form
@@ -21,6 +22,7 @@ def generate_total_degree_start_system(target_system: PolynomialSystem,
     Args:
         target_system: Target polynomial system to solve
         variables: List of variables in the system
+        allow_underdetermined: If True, allow systems with fewer equations than variables
         
     Returns:
         Tuple of (start_system, start_solutions)
@@ -30,20 +32,23 @@ def generate_total_degree_start_system(target_system: PolynomialSystem,
     n_eqs = len(degrees)
     n_vars = len(variables)
     
-    # Ensure the system is square (same number of equations as variables)
-    if n_eqs != n_vars:
+    # Ensure the system is square unless allow_underdetermined is True
+    if n_eqs != n_vars and not allow_underdetermined:
         raise ValueError(f"Expected a square system, but got {n_eqs} equations in {n_vars} variables")
+    
+    # For underdetermined systems, we'll handle them specially
+    working_variables = variables[:n_eqs] if n_eqs < n_vars else variables
     
     # Generate random complex coefficients for the start system
     # We use random values on the unit circle
     c_values = []
-    for i in range(n_vars):
+    for i in range(n_eqs):
         angle = np.random.uniform(0, 2 * np.pi)
         c_values.append(complex(np.cos(angle), np.sin(angle)))
     
     # Create the start system equations x_i^(d_i) - c_i = 0
     start_equations = []
-    for i, (var, deg, c) in enumerate(zip(variables, degrees, c_values)):
+    for i, (var, deg, c) in enumerate(zip(working_variables, degrees, c_values)):
         # Create x_i^(d_i) term using Monomial
         term1 = Monomial({var: deg})
         # Create c_i term using Monomial
@@ -57,6 +62,15 @@ def generate_total_degree_start_system(target_system: PolynomialSystem,
     
     # Generate all solutions to the start system
     start_solutions = generate_total_degree_solutions(degrees, c_values)
+    
+    # For underdetermined systems, extend each solution with zeros for remaining variables
+    if n_eqs < n_vars and allow_underdetermined:
+        extended_solutions = []
+        for sol in start_solutions:
+            # Extend with zeros for the remaining variables
+            extended_sol = list(sol) + [0.0] * (n_vars - n_eqs)
+            extended_solutions.append(extended_sol)
+        start_solutions = extended_solutions
     
     return start_system, start_solutions
 
@@ -100,4 +114,3 @@ def generate_total_degree_solutions(degrees: List[int],
     
     build_solutions([], 0)
     return solutions
-
