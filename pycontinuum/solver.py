@@ -201,7 +201,7 @@ class SolutionSet:
         result._meta['is_filtered'] = True
         return result
 
-def solve(system: PolynomialSystem, 
+def solve(system: PolynomialSystem,
           start_system=None,
           start_solutions=None,
           variables=None,
@@ -212,7 +212,7 @@ def solve(system: PolynomialSystem,
           endgame_options: Optional[Dict[str, Any]] = None,
           deduplication_tol_factor: float = 10.0,
           singular_deduplication_tol: float = 1e-3,
-          allow_underdetermined: bool = False) -> SolutionSet:  # Added this parameter
+          **extra_tracker_options: Any) -> SolutionSet:
     """Solve a polynomial system using homotopy continuation.
     Args:
         system: The polynomial system to solve
@@ -226,93 +226,110 @@ def solve(system: PolynomialSystem,
         endgame_options: Optional dictionary of options for the endgame procedure
         deduplication_tol_factor: Factor multiplied by `tol` for regular solution deduplication.
         singular_deduplication_tol: Absolute tolerance for singular solution deduplication.
-        allow_underdetermined: Whether to allow systems with fewer equations than variables
-        
+        **extra_tracker_options: Additional keyword arguments passed directly to track_paths.
+
     Returns:
         A SolutionSet containing all found solutions
     """
     start_time = time.time()
-    
-    # Get the variables in the system
+
     if variables is None:
         variables = list(system.variables())
-        
+
     if verbose:
         print(f"Variables used for solving: {variables}")
-    
+
+    # Check if system is square
+    n_eqs = len(system.equations)
+    n_vars = len(variables)
+    if n_eqs != n_vars:
+        raise ValueError(f"solver.solve currently requires a square system "
+                         f"({n_eqs} equations, {n_vars} variables). "
+                         "Use witness set methods for non-square systems.")
+
     # If no start system provided, generate a total-degree system
     if start_system is None or start_solutions is None:
         if verbose:
             print("Generating total-degree start system...")
-            
-        # Pass allow_underdetermined parameter to start system generator
         start_system, start_solutions = generate_total_degree_start_system(
-            system, variables, allow_underdetermined
+            system, variables
         )
-        
         if verbose:
             degrees = system.degrees()
-            total_paths = np.prod(degrees)
+            total_paths = np.prod(degrees) if degrees else 0
             print(f"Using total-degree homotopy with {total_paths} start paths ({' * '.join(map(str, degrees))})")
-    
+
     # Track the paths from start solutions to the target system
     if verbose:
         print(f"Tracking {len(start_solutions)} paths...")
+
+    tracker_options = {
+        'tol': tol,
+        'verbose': verbose,
+        'store_paths': store_paths,
+        'use_endgame': use_endgame,
+        'endgame_options': endgame_options,
+        **extra_tracker_options
+    }
+
     end_solutions, path_results = track_paths(
         start_system=start_system,
         target_system=system,
         start_solutions=start_solutions,
         variables=variables,
-        tol=tol,
-        verbose=verbose,
-        store_paths=store_paths,
-        use_endgame=use_endgame,
-        endgame_options=endgame_options
+        **tracker_options
     )
-    # Process the raw solutions
+
     raw_solutions = []
-    
     if verbose:
         print("Processing and classifying solutions...")
-    
-    # Function to compute residual
+
     def compute_residual(sol_values):
-        return np.linalg.norm(system.evaluate(sol_values))
-    
-    # Process each end solution and its path result info
+        eval_result = system.evaluate(sol_values)
+        return np.linalg.norm(np.array(eval_result, dtype=complex))
+
     successful_paths = 0
     failed_paths = 0
+    for i, path_info in enumerate(path_results):
+        if not isinstance(path_info, dict) or 'success' not in path_info:
+            print(f"Warning: Invalid path result format for path {i}. Skipping.")
+            failed_paths += 1
+            continue
 
-    # path_results should now be a list of dictionaries, one for each path
-    # Each dict contains keys like 'success', 'singular', 'endgame_used', 'winding_number', 'predictions', etc.
-    for i, path_result_info in enumerate(path_results):
-        endpoint = end_solutions[i] # Get the endpoint corresponding to this path result
+        endpoint = end_solutions[i]
 
-        # Check if the path was successful (either tracker reached t=0 or endgame succeeded)
-        if not path_result_info.get('success', False):
-             failed_paths += 1
-             continue
+        if not path_info.get('success', False):
+            failed_paths += 1
+            continue
 
         successful_paths += 1
 
-        # Use the final point from the path or endgame prediction
-        final_point = np.array(path_result_info.get('final_point', endpoint), dtype=complex) # Assume track_paths adds 'final_point'
+        if not isinstance(endpoint, np.ndarray) or not np.all(np.isfinite(endpoint)):
+            print(f"Warning: Invalid endpoint for successful path {i}. Skipping.")
+            successful_paths -= 1
+            failed_paths += 1
+            continue
 
-        # Create Solution object
+        final_point = np.array(path_info.get('final_point', endpoint), dtype=complex)
+
         solution_dict = {var: val for var, val in zip(variables, final_point)}
-        residual = compute_residual(solution_dict)
+        try:
+            residual = compute_residual(solution_dict)
+        except Exception as e:
+            print(f"Warning: Error computing residual for path {i}: {e}. Skipping.")
+            successful_paths -= 1
+            failed_paths += 1
+            continue
 
-        # Skip solutions with large residuals (adjust tolerance if endgame was used?)
-        # Maybe the endgame success check is sufficient, but keeping this as a safeguard
-        if residual > 100 * tol: # Consider a different tolerance if endgame was used
-             if verbose:
-                 print(f"Skipping solution from path {i} due to large residual ({residual:.2e})")
-             failed_paths += 1 # Count as failed path if residual is too high
-             continue
+        if residual > 100 * tol:
+            if verbose:
+                print(f"Skipping solution from path {i} due to large residual ({residual:.2e} > {100*tol:.2e})")
+            successful_paths -= 1
+            failed_paths += 1
+            continue
 
-        # Determine singularity status and winding number from path_result_info
-        is_singular = path_result_info.get('singular', False)
-        winding_number = path_result_info.get('winding_number', None)
+        is_singular = path_info.get('singular', False)
+        winding_number = path_info.get('winding_number', None)
 
         solution = Solution(
             values=solution_dict,
@@ -321,73 +338,45 @@ def solve(system: PolynomialSystem,
             path_index=i
         )
 
-        # Store winding number if available
         if winding_number is not None:
-             solution.winding_number = winding_number
+            solution.winding_number = winding_number
 
-        # Store path points if available
-        if store_paths and path_result_info.get('path_points'): # Access path_points from the specific path's result info
-            solution.path_points = path_result_info['path_points']
+        if store_paths and path_info.get('path_points'):
+            solution.path_points = path_info['path_points']
 
         raw_solutions.append(solution)
 
-    # Remove duplicate solutions using a proximity-based grouping
     unique_solutions = []
-    # Use a list to store representatives of unique solutions found so far
     unique_representatives: List[Solution] = []
-
-    # Define tolerances based on input args
-    regular_tol = tol * deduplication_tol_factor
-    singular_tol = singular_deduplication_tol # Use the new specific tolerance
+    current_regular_tol = tol * deduplication_tol_factor
+    current_singular_tol = singular_deduplication_tol
 
     if verbose:
-        print(f"Attempting to deduplicate {len(raw_solutions)} raw solutions...")
+        print(f"Attempting to deduplicate {len(raw_solutions)} raw solutions "
+              f"(reg_tol={current_regular_tol:.2e}, sing_tol={current_singular_tol:.2e})...")
 
     for sol in raw_solutions:
         is_duplicate = False
-        # Check against existing unique representatives
         for existing_sol in unique_representatives:
             dist = sol.distance(existing_sol, variables)
-
-            # Use different tolerances for singular vs. regular solutions
-            current_tol = singular_tol if sol.is_singular and existing_sol.is_singular else regular_tol
-
-            if dist < current_tol:
+            use_tol = current_singular_tol if sol.is_singular and existing_sol.is_singular else current_regular_tol
+            if dist < use_tol:
                 is_duplicate = True
-                # Optional: If singular, combine winding numbers or other properties
-                # if sol.is_singular and existing_sol.is_singular and hasattr(existing_sol, 'winding_number'):
-                #     existing_sol.winding_number = (existing_sol.winding_number or 0) + (sol.winding_number or 0)
                 break
-
         if not is_duplicate:
             unique_solutions.append(sol)
-            unique_representatives.append(sol) # Add this solution as a new representative
+            unique_representatives.append(sol)
 
-    # Create the result
     result = SolutionSet(unique_solutions, system)
-    
-    # Add metadata
+
     result._meta['total_paths'] = len(start_solutions)
     result._meta['successful_paths'] = successful_paths
-    result._meta['failed_paths'] = failed_paths # This now includes paths skipped due to high residual
+    result._meta['failed_paths'] = failed_paths
     result._meta['solve_time'] = time.time() - start_time
-    result._meta['raw_solutions_found'] = len(raw_solutions) # Count of solutions *before* deduplication but *after* residual check
-    
+    result._meta['raw_solutions_found'] = len(raw_solutions)
+
     if verbose:
-        print(f"Found {len(unique_solutions)} distinct solutions (from {len(raw_solutions)} raw solutions)")
-        print(f"Solution process completed in {result._meta['solve_time']:.2f} seconds")
-    
+        print(f"Found {len(unique_solutions)} distinct solutions (from {len(raw_solutions)} raw).")
+        print(f"Solve time: {result._meta['solve_time']:.2f}s. Successful paths: {successful_paths}/{len(start_solutions)}.")
+
     return result
-
-
-def polyvar(*names: str) -> Union[Variable, Tuple[Variable, ...]]:
-    """Create polynomial variables with the given names.
-    
-    Args:
-        *names: Variable names
-        
-    Returns:
-        A single Variable or a tuple of Variables
-    """
-    variables = tuple(Variable(name) for name in names)
-    return variables[0] if len(variables) == 1 else variables
