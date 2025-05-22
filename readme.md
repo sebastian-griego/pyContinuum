@@ -2,8 +2,7 @@
 
 A pure Python library for polynomial homotopy continuation methods.
 
-[![PyPI version](https://img.shields.io/pypi/v/pycontinuum.svg)](https://pypi.org/project/pycontinuum/)
-[![Documentation Status](https://readthedocs.org/projects/pycontinuum/badge/?version=latest)](https://pycontinuum.readthedocs.io/en/latest/?badge=latest)
+
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 
 ## Overview
@@ -46,9 +45,6 @@ print(solutions)
 pip install pycontinuum
 ```
 
-## Documentation
-
-Full documentation is available at [https://pycontinuum.readthedocs.io/](https://pycontinuum.readthedocs.io/)
 
 ## Status
 
@@ -69,4 +65,3 @@ PyContinuum draws inspiration from existing software in numerical algebraic geom
 - Bertini and PyBertini
 - HomotopyContinuation.jl
 
-We're grateful to the researchers who have developed and advanced the field of numerical homotopy methods.
