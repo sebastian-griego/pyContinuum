@@ -45,6 +45,13 @@ print(solutions)
 pip install pycontinuum
 ```
 
+Optional features:
+
+```bash
+# Monodromy-related functionality
+pip install pycontinuum[monodromy]
+```
+
 
 ## Status
 

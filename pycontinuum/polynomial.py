@@ -320,6 +320,77 @@ class Polynomial:
                     term_strs.append(f"- {s[1:]}")
         
         return " ".join(term_strs)
+
+    @staticmethod
+    def parse(expr: str, variables: Optional[Dict[str, "Variable"]] = None) -> "Polynomial":
+        """Parse a simple polynomial string into a Polynomial.
+        Supported syntax examples: "x^2 + 3*x*y - 1", "2x^2y - 5".
+        This is a lightweight parser intended for convenience and tests.
+
+        Args:
+            expr: Polynomial expression string
+            variables: Optional pre-existing name->Variable map to reuse
+
+        Returns:
+            Polynomial instance
+        """
+        import re
+
+        if variables is None:
+            variables = {}
+
+        # Normalize expression: insert * between number/var and var (e.g., 2x -> 2*x)
+        normalized = re.sub(r"(\d)([A-Za-z])", r"\1*\2", expr)
+        normalized = re.sub(r"([A-Za-z])(\d)", r"\1*\2", normalized)
+        normalized = normalized.replace(" ", "")
+
+        # Tokenize by plus/minus while keeping signs
+        # Split into terms like ['+x^2', '-3*x*y', '+1']
+        terms: List[Monomial] = []
+        for token in re.finditer(r"[+-]?[^+-]+", normalized):
+            term_str = token.group(0)
+            if not term_str:
+                continue
+            sign = 1.0
+            if term_str[0] == '+':
+                term_str = term_str[1:]
+            elif term_str[0] == '-':
+                sign = -1.0
+                term_str = term_str[1:]
+
+            if term_str == "":
+                continue
+
+            # Split by '*'
+            factors = term_str.split('*')
+            coef: complex = 1.0
+            var_exp: Dict[Variable, int] = {}
+
+            for f in factors:
+                if f == "":
+                    continue
+                # Constant number?
+                try:
+                    coef *= float(f)
+                    continue
+                except ValueError:
+                    pass
+
+                # Variable or power like x^2
+                if '^' in f:
+                    name, exp_str = f.split('^', 1)
+                    exp = int(exp_str)
+                else:
+                    name, exp = f, 1
+
+                if name not in variables:
+                    variables[name] = Variable(name)
+                var = variables[name]
+                var_exp[var] = var_exp.get(var, 0) + exp
+
+            terms.append(Monomial(var_exp, coefficient=sign * coef))
+
+        return Polynomial(terms)
     
     def degree(self) -> int:
         """Get the maximum degree of any term in the polynomial."""

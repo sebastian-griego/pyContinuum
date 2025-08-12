@@ -50,6 +50,9 @@ docs = [
     "nbsphinx>=0.8.9",
     "ipython>=8.0.0",
 ]
+monodromy = [
+    "sympy>=1.12",
+]
 
 [project.urls]
 "Homepage" = "https://github.com/sebastian-griego/pycontinuum"
