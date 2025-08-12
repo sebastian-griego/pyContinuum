@@ -15,7 +15,8 @@ from pycontinuum.polynomial import Variable, Polynomial, PolynomialSystem
 from pycontinuum.utils import (
     evaluate_system_at_point,
     evaluate_jacobian_at_point,
-    newton_corrector
+    newton_corrector,
+    newton_corrector_numeric,
 )
 from pycontinuum.endgame import run_cauchy_endgame
 
@@ -288,64 +289,43 @@ def track_single_path(start_system: PolynomialSystem,
         # Predict the next point using Euler's method
         predicted = euler_predictor(t, t_target, current_point, tangent)
         
-        # Define the functions directly without using lambdas
-        def evaluate_homotopy(point_dict):
-            # Avoid the circular reference by directly evaluating systems
-            f_values = [eq.evaluate(point_dict) for eq in target_system.equations]
-            g_values = [eq.evaluate(point_dict) for eq in start_system.equations]
-            
-            # Compute the homotopy values
-            return [(1 - t_target) * f + t_target * gamma * g 
-                   for f, g in zip(f_values, g_values)]
-        
-        def jacobian_homotopy(vars_list):
-            # Create a dictionary for evaluation
-            value_dict = {var: predicted[i] for i, var in enumerate(variables)}
-            
-            # Get Jacobian polynomials
-            target_jac = target_system.jacobian(vars_list)
-            start_jac = start_system.jacobian(vars_list)
-            
-            # Compute the homotopy Jacobian
-            result = []
-            for row_f, row_g in zip(target_jac, start_jac):
-                new_row = []
-                for f, g in zip(row_f, row_g):
-                    # Create a polynomial representing (1-t)*f + t*gamma*g
-                    # We'll use the coefficient mechanism for simple cases
-                    f_val = f.evaluate(value_dict)
-                    g_val = g.evaluate(value_dict)
-                    new_val = (1 - t_target) * f_val + t_target * gamma * g_val
-                    
-                    # Create a constant Polynomial with this value
-                    from pycontinuum.polynomial import Polynomial, Monomial
-                    new_poly = Polynomial([Monomial({}, coefficient=new_val)])
-                    new_row.append(new_poly)
-                result.append(new_row)
-            
-            return result
+        # Numeric homotopy functions for Newton corrector
+        def f_numeric(x: np.ndarray) -> np.ndarray:
+            return homotopy_function(
+                start_system, target_system, x, t_target, variables, gamma
+            )
 
-        # Create a simple system with our functions
-        homotopy_system = PolynomialSystem([])  # Placeholder
-        homotopy_system.evaluate = evaluate_homotopy
-        homotopy_system.jacobian = jacobian_homotopy
-        
+        def j_numeric(x: np.ndarray) -> np.ndarray:
+            return homotopy_jacobian(
+                start_system, target_system, x, t_target, variables, gamma
+            )
+
         # Apply Newton's method to correct the predicted point
-        corrected, success, iters = newton_corrector(homotopy_system, predicted, variables, tol=tol)
+        corrected, success, iters = newton_corrector_numeric(
+            f_numeric, j_numeric, predicted, max_iters=10, tol=tol
+        )
         
         path_info['newton_iters'] += iters
         
         # Adjust step size based on Newton convergence
         if not success or iters > 5:
-            # Reduce step size and try again
-            step_size = max(min_step_size, step_size / 2)
-            if step_size == min_step_size and not success:
+            # Reduce step size and retry the correction with smaller step
+            retry = True
+            while retry and (step_size > min_step_size):
+                step_size = max(min_step_size, step_size / 2)
+                t_target = max(0.0, t - step_size)
+                predicted = euler_predictor(t, t_target, current_point, tangent)
+                corrected, success, iters_retry = newton_corrector_numeric(
+                    f_numeric, j_numeric, predicted, max_iters=10, tol=tol
+                )
+                path_info['newton_iters'] += iters_retry
+                retry = not success and (step_size > min_step_size)
+            if not success:
                 if store_paths:
-                    print(f"Newton failed to converge at t={t_target}, path may be near a singularity")
-                # Do a final correction attempt at a larger tolerance
-                corrected, success, _ = newton_corrector(homotopy_system, predicted, variables, tol=tol*10)
-                if not success:
-                    return corrected, path_info
+                    print(
+                        f"Newton failed to converge at t={t_target}, path may be near a singularity"
+                    )
+                return corrected, path_info
         elif iters <= 2 and step_size < max_step_size:
             # Increase step size if Newton converges quickly
             step_size = min(max_step_size, step_size * 1.5)

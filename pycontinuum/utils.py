@@ -6,6 +6,13 @@ This module provides common utility functions used across the library.
 
 import numpy as np
 from typing import Dict, List, Tuple, Optional, Any, Union, Callable
+try:
+    from scipy.linalg import lu_factor, lu_solve  # type: ignore
+    _HAS_SCIPY = True
+except Exception:  # pragma: no cover - optional dependency
+    lu_factor = None  # type: ignore
+    lu_solve = None  # type: ignore
+    _HAS_SCIPY = False
 
 from pycontinuum.polynomial import Variable, PolynomialSystem
 
@@ -87,3 +94,71 @@ def newton_corrector(system: PolynomialSystem,
     
     # If we got here, we didn't converge
     return current, False, max_iters
+
+
+def solve_linear_system(jac: np.ndarray, rhs: np.ndarray) -> np.ndarray:
+    """Solve a linear system robustly using LU with fallback to least squares.
+
+    Args:
+        jac: Jacobian matrix (m x n), typically square
+        rhs: Right-hand side vector (m,)
+
+    Returns:
+        Solution vector x minimizing ||Jx - rhs||.
+    """
+    if _HAS_SCIPY:
+        try:
+            lu, piv = lu_factor(jac)
+            return lu_solve((lu, piv), rhs)
+        except Exception:
+            pass
+    # Fallback to least squares
+    return np.linalg.lstsq(jac, rhs, rcond=None)[0]
+
+
+def newton_corrector_numeric(
+    f: Callable[[np.ndarray], np.ndarray],
+    jac: Callable[[np.ndarray], np.ndarray],
+    point: np.ndarray,
+    max_iters: int = 10,
+    tol: float = 1e-10,
+) -> Tuple[np.ndarray, bool, int]:
+    """Newton's method for numeric function and Jacobian callables.
+
+    Args:
+        f: Function mapping x -> f(x)
+        jac: Function mapping x -> J(x)
+        point: Initial guess
+        max_iters: Maximum iterations
+        tol: Convergence tolerance on step and residual
+
+    Returns:
+        (x, success, iters)
+    """
+    current = np.array(point, dtype=complex)
+    for i in range(max_iters):
+        f_val = f(current)
+        if np.linalg.norm(f_val) < tol:
+            return current, True, i
+        J = jac(current)
+        delta = solve_linear_system(J, -f_val)
+        current = current + delta
+        if np.linalg.norm(delta) < tol:
+            return current, True, i + 1
+    return current, False, max_iters
+
+
+def evaluate_jacobian_polynomials(jac_polys: List[List[Any]], var_dict: Dict[Variable, complex]) -> np.ndarray:
+    """Evaluate a Jacobian represented as polynomials at a point.
+
+    Args:
+        jac_polys: List of rows, each a list of Polynomial
+        var_dict: Mapping variable -> value
+
+    Returns:
+        Numeric Jacobian matrix.
+    """
+    rows: List[List[complex]] = []
+    for row in jac_polys:
+        rows.append([poly.evaluate(var_dict) for poly in row])
+    return np.array(rows, dtype=complex)
