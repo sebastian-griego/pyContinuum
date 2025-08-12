@@ -52,8 +52,8 @@ docs = [
 ]
 
 [project.urls]
-"Homepage" = "https://github.com/yourusername/pycontinuum"
-"Bug Tracker" = "https://github.com/yourusername/pycontinuum/issues"
+"Homepage" = "https://github.com/sebastian-griego/pycontinuum"
+"Bug Tracker" = "https://github.com/sebastian-griego/pycontinuum/issues"
 "Documentation" = "https://pycontinuum.readthedocs.io/"
 
 [tool.black]

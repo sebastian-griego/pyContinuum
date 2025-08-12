@@ -523,30 +523,3 @@ def polyvar(*names: str) -> Union[Variable, Tuple[Variable, ...]]:
     variables = tuple(Variable(name) for name in names)
     return variables[0] if len(variables) == 1 else variables
 
-
-def make_system(*equations) -> "PolynomialSystem":
-    """Create a polynomial system from various types of equations.
-    
-    Args:
-        *equations: Polynomial equations to include in the system
-        
-    Returns:
-        A PolynomialSystem object containing the processed equations
-        
-    Raises:
-        TypeError: If an equation cannot be converted to a Polynomial
-    """
-    processed_equations = []
-    for eq in equations:
-        if isinstance(eq, Polynomial):
-            processed_equations.append(eq)
-        elif isinstance(eq, (Monomial, Variable)):
-            processed_equations.append(Polynomial([eq]))
-        else:
-            try:
-                # Try to convert to Polynomial if it's not already one
-                processed_equations.append(Polynomial([eq]))
-            except TypeError:
-                raise TypeError(f"Cannot convert {type(eq)} to polynomial equation")
-    
-    return PolynomialSystem(processed_equations)

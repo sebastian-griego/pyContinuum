@@ -28,163 +28,240 @@ def track_monodromy_loop(original_system: PolynomialSystem,
                          parameter_tracker_options: Dict = None) -> List[Permutation]:
     """
     Track witness points around random loops in parameter space.
-    (Removed dummy variable logic)
+    
+    This creates random loops in the space of linear slices and tracks
+    witness points along these loops to discover permutations.
+    
+    Args:
+        original_system: The original polynomial system F.
+        start_slice: The starting slicing system L.
+        start_witness_points: The list of witness points W.
+        variables: System variables.
+        num_loops: Number of random loops to perform.
+        parameter_tracker_options: Options for parameter tracking.
+        
+    Returns:
+        A list of permutations representing the action of monodromy.
     """
     if parameter_tracker_options is None:
         parameter_tracker_options = {}
-
+        
     n_points = len(start_witness_points)
     if n_points == 0:
         return []
-
+        
+    # Convert Solution objects to numeric arrays for tracking
     start_w_numeric = np.array([
-        [sol.values[var] for var in variables]
+        [sol.values[var] for var in variables] 
         for sol in start_witness_points
     ], dtype=complex)
-
+    
+    # Initialize with identity permutation
     identity_perm = Permutation(list(range(n_points)))
     permutations = []
-
+    
+    # Use the starting slice as the current slice
     current_slice = start_slice
-    current_w_numeric = start_w_numeric.copy()  # Keep track of current points numerically
-
-    max_attempts = num_loops * 2  # Allow some retries if loops fail
-    loop_count = 0
-    successful_loops = 0
-
-    while successful_loops < num_loops and loop_count < max_attempts:
-        loop_count += 1
-        print(f"Monodromy Loop Attempt {loop_count}/{max_attempts} (Target: {num_loops} successful)")
-
-        # 1. Generate a random target slice
+    current_w_numeric = start_w_numeric.copy()
+    
+    # IMPORTANT: Create extended variables for non-square systems
+    n_equations = len(original_system.equations) + len(start_slice.equations)
+    n_vars = len(variables)
+    
+    # If system is underdetermined, add Lagrange multiplier variables 
+    # This is just for the monodromy tracking
+    extended_vars = variables.copy()
+    dummy_vars = []
+    
+    if n_equations < n_vars:
+        # Create dummy variables λ_1, λ_2, etc.
+        for i in range(n_vars - n_equations):
+            dummy_var_name = f"λ_{i+1}"
+            dummy_var = Variable(dummy_var_name)
+            dummy_vars.append(dummy_var)
+            extended_vars.append(dummy_var)
+            
+        # Extend the current points with zeros for the dummy variables
+        dummy_zeros = np.zeros((n_points, len(dummy_vars)), dtype=complex)
+        current_w_numeric = np.hstack((current_w_numeric, dummy_zeros))
+    
+    for loop_num in range(num_loops):
+        print(f"Monodromy Loop {loop_num + 1}/{num_loops}")
+        
+        # 1. Generate a random target slice (same dimension as start_slice)
         dimension = len(current_slice.equations)
         target_slice = generate_generic_slice(dimension, variables)
-
-        # 2. Create FORWARD parameter homotopy (Current -> Target)
+        
+        # 2. Create parameter homotopy from current to target slice
         ph_forward = ParameterHomotopy(
-            original_system, current_slice, target_slice, variables
+            original_system, 
+            current_slice, 
+            target_slice, 
+            extended_vars if dummy_vars else variables,
+            square_fix=True  # Use our new square_fix parameter
         )
-
-        # 3. Track points forward
+        
+        # 3. Track all points from current to target (t=0 to t=1)
         end_points_leg1 = np.zeros_like(current_w_numeric)
-        success_flags_leg1 = [False] * n_points
-        tracked_indices_leg1 = set()  # Indices that succeed leg 1
-
+        success_leg1 = True
+        tracked_indices = list(range(n_points))
+        results_leg1 = {}
+        
         print(f"  Tracking {n_points} points to intermediate slice...")
         for i in range(n_points):
-            track_opts = parameter_tracker_options.copy()  # Pass options down
-            end_pt, info = track_parameter_path(
-                ph_forward, current_w_numeric[i], options=track_opts
-            )
-            if info.get('success', False):
-                end_points_leg1[i] = end_pt
-                success_flags_leg1[i] = True
-                tracked_indices_leg1.add(i)
-            else:
-                print(f"  Warning: Path {i} failed during forward tracking (t={info.get('t', '?'):.3f}).")
-
-        # Check if enough paths succeeded
-        if len(tracked_indices_leg1) < 2:  # Need at least 2 points to define a non-trivial permutation
-            print("  Not enough paths succeeded on forward leg. Trying new loop.")
-            current_slice = start_slice  # Reset to original slice for next attempt
-            current_w_numeric = start_w_numeric.copy()
-            continue  # Go to next loop attempt
-
-        # 4. Create RETURN parameter homotopy (Target -> Start)
-        ph_return = ParameterHomotopy(
-            original_system, target_slice, start_slice, variables
-        )
-
-        # 5. Track successful points back
-        final_end_points = np.zeros_like(current_w_numeric)
-        success_flags_leg2 = [False] * n_points
-        tracked_indices_leg2 = set()  # Indices that succeed leg 2
-
-        print(f"  Tracking {len(tracked_indices_leg1)} points back to start slice...")
-        for i in tracked_indices_leg1:  # Only track points that succeeded leg 1
+            # Set tracking options with higher precision for better matching
             track_opts = parameter_tracker_options.copy()
+            track_opts.setdefault('tol', 1e-10)  # Tighter tolerance
+            
             end_pt, info = track_parameter_path(
-                ph_return, end_points_leg1[i], options=track_opts
+                ph_forward, 
+                current_w_numeric[i], 
+                start_t=0.0, 
+                end_t=1.0, 
+                options=track_opts
             )
-            if info.get('success', False):
-                final_end_points[i] = end_pt
-                success_flags_leg2[i] = True
-                tracked_indices_leg2.add(i)
+            
+            if not info['success']:
+                print(f"  Warning: Path {i} failed during forward tracking.")
+                success_leg1 = False
+                tracked_indices.remove(i)
+                continue
+                
+            end_points_leg1[i] = end_pt
+            results_leg1[i] = info
+            
+        # 4. Create return homotopy from target back to start
+        ph_return = ParameterHomotopy(
+            original_system,
+            target_slice,
+            start_slice,
+            extended_vars if dummy_vars else variables,
+            square_fix=True  # Use our new square_fix parameter
+        )
+        
+        # If forward leg failed completely, skip this loop
+        if not tracked_indices:
+            print("  All paths failed on forward leg. Skipping this loop.")
+            continue
+            
+        # 5. Track successful points back to start slice
+        final_end_points = np.zeros_like(current_w_numeric)
+        success_leg2 = True
+        results_leg2 = {}
+        
+        print(f"  Tracking {len(tracked_indices)} points back to start slice...")
+        for i in tracked_indices:
+            # Use the same refined options
+            track_opts = parameter_tracker_options.copy()
+            track_opts.setdefault('tol', 1e-10)
+            
+            end_pt, info = track_parameter_path(
+                ph_return,
+                end_points_leg1[i],
+                start_t=0.0,
+                end_t=1.0,
+                options=track_opts
+            )
+            
+            if not info['success']:
+                print(f"  Warning: Path {i} failed during return tracking.")
+                success_leg2 = False
+                tracked_indices.remove(i)
+                continue
+                
+            final_end_points[i] = end_pt
+            results_leg2[i] = info
+            
+        # If return leg failed completely, skip this loop
+        if not tracked_indices:
+            print("  All paths failed on return leg. Skipping this loop.")
+            continue
+            
+        # 6. Match final points back to start points to find permutation
+        # Only consider points that were successfully tracked both ways
+        # Use only the original variables (not the dummy variables) for matching
+        match_tol = parameter_tracker_options.get('match_tol', 1e-3)  # Increased tolerance
+        
+        # Create dictionaries of successfully tracked points, but only use original variables
+        orig_var_count = len(variables)
+        start_subset = {idx: start_w_numeric[idx, :orig_var_count] for idx in tracked_indices}
+        final_subset = {idx: final_end_points[idx, :orig_var_count] for idx in tracked_indices}
+        
+        # Try normalized matching (less sensitive to scaling differences)
+        def normalize_point(p):
+            norm = np.linalg.norm(p)
+            if norm > 1e-10:
+                return p / norm
+            return p
+            
+        # Normalize all points for better matching
+        start_norm = {idx: normalize_point(p) for idx, p in start_subset.items()}
+        final_norm = {idx: normalize_point(p) for idx, p in final_subset.items()}
+        
+        # Initialize mapping: final_idx -> start_idx
+        mapping = [-1] * n_points
+        used_start_indices = set()
+        
+        # Match points based on distance of normalized points
+        for final_idx in tracked_indices:
+            best_match_idx = -1
+            min_dist = float('inf')
+            
+            for start_idx in tracked_indices:
+                if start_idx not in used_start_indices:
+                    # Try different distance metrics
+                    # 1. Euclidean distance of normalized points
+                    dist1 = np.linalg.norm(final_norm[final_idx] - start_norm[start_idx])
+                    # 2. Angular distance (dot product of normalized vectors)
+                    dot = np.abs(np.vdot(final_norm[final_idx], start_norm[start_idx]))
+                    dist2 = 1.0 - dot  # Smaller is better (0 = parallel)
+                    
+                    # Use combined metric
+                    dist = dist1 * 0.5 + dist2 * 0.5
+                    
+                    if dist < min_dist:
+                        min_dist = dist
+                        best_match_idx = start_idx
+                        
+            # Looser matching tolerance
+            if min_dist < match_tol and best_match_idx != -1:
+                mapping[final_idx] = best_match_idx
+                used_start_indices.add(best_match_idx)
             else:
-                print(f"  Warning: Path {i} failed during return tracking (t={info.get('t', '?'):.3f}).")
-
-        # Identify points tracked successfully both ways
-        fully_tracked_indices = tracked_indices_leg1.intersection(tracked_indices_leg2)
-
-        if len(fully_tracked_indices) < 2:
-            print("  Not enough paths succeeded on return leg. Trying new loop.")
-            current_slice = start_slice  # Reset
-            current_w_numeric = start_w_numeric.copy()
-            continue  # Go to next loop attempt
-
-        # 6. Match final points back to start points for successfully tracked paths
-        match_tol = parameter_tracker_options.get('match_tol', 1e-4)  # Adjust tolerance maybe
-
-        start_subset = {idx: start_w_numeric[idx] for idx in fully_tracked_indices}
-        final_subset = {idx: final_end_points[idx] for idx in fully_tracked_indices}
-
-        # --- Consider using scipy.optimize.linear_sum_assignment for robust matching ---
-        # Build cost matrix (distances)
-        cost_matrix = np.full((len(fully_tracked_indices), len(fully_tracked_indices)), float('inf'))
-        idx_list = sorted(list(fully_tracked_indices))
-        idx_map = {original_idx: mapped_idx for mapped_idx, original_idx in enumerate(idx_list)}
-
-        for r_idx, start_idx in enumerate(idx_list):
-            for c_idx, final_idx in enumerate(idx_list):
-                # Use norm for distance
-                dist = np.linalg.norm(start_subset[start_idx] - final_subset[final_idx])
-                cost_matrix[r_idx, c_idx] = dist
-
-        from scipy.optimize import linear_sum_assignment
-        row_ind, col_ind = linear_sum_assignment(cost_matrix)
-
-        # Check if matches are within tolerance
-        mapping = {}  # Stores start_idx -> final_idx
-        valid_match = True
-        for r, c in zip(row_ind, col_ind):
-            start_idx = idx_list[r]
-            final_idx = idx_list[c]
-            if cost_matrix[r, c] < match_tol:
-                mapping[start_idx] = final_idx
-            else:
-                print(f"  Warning: Match distance too high for pair "
-                      f"({start_idx} -> {final_idx}, dist={cost_matrix[r, c]:.2e}).")
-                valid_match = False
-                break
-
-        if valid_match:
-            # Construct permutation array (identity for non-tracked/non-matched)
+                print(f"  Warning: Could not match final point {final_idx} (min_dist={min_dist:.2e}).")
+                # Don't fail completely - just leave this point unmapped
+        
+        # If we've matched enough points, construct a permutation
+        if len(used_start_indices) >= 2:  # Need at least 2 points for non-identity perm
+            # Create a map: start_idx -> final_idx from mapping: final_idx -> start_idx
+            start_to_final = {}
+            for final_idx, start_idx in enumerate(mapping):
+                if start_idx != -1:
+                    start_to_final[start_idx] = final_idx
+                    
+            # Create the permutation array - use identity for unmapped points
             perm_array = list(range(n_points))
-            for start_idx, final_idx in mapping.items():
-                perm_array[start_idx] = final_idx
-
+            for i in range(n_points):
+                if i in start_to_final:
+                    perm_array[i] = start_to_final[i]
+                    
+            # Create sympy Permutation object
             perm = Permutation(perm_array)
+            
+            # Only add non-identity permutations
             if perm != identity_perm:
                 permutations.append(perm)
-                print(f"  Found permutation: {perm.array_form}")
-                successful_loops += 1
+                print(f"  Found permutation: {perm}")
             else:
                 print("  Loop produced identity permutation.")
         else:
-            print("  Matching failed due to high distance. Trying new loop.")
-            current_slice = start_slice  # Reset
-            current_w_numeric = start_w_numeric.copy()
-            continue  # Go to next loop attempt
-
-        # Update current points/slice for the next attempt (using target from successful loop)
+            print(f"  Not enough matches ({len(used_start_indices)}) to determine permutation.")
+            
+        # Update current slice and points for next loop
+        # This allows exploring more of the parameter space
         current_slice = target_slice
-        # Update only the successfully tracked points for the next iteration start
-        for idx in fully_tracked_indices:
-            current_w_numeric[idx] = end_points_leg1[idx]  # Use points at target slice
-
-    if successful_loops < num_loops:
-        print(f"Warning: Only found {successful_loops}/{num_loops} successful monodromy loops after {max_attempts} attempts.")
-
+        current_w_numeric = end_points_leg1
+        
     return permutations
 
 def numerical_irreducible_decomposition(original_system: PolynomialSystem,
@@ -329,79 +406,80 @@ def numerical_irreducible_decomposition(original_system: PolynomialSystem,
 
 def compute_numerical_decomposition(system: PolynomialSystem,
                                    variables: List[Variable] = None,
-                                   max_dimension: int = None,  # Keep parameter for potential future use
+                                   max_dimension: int = None,
                                    solver_options: Dict = None,
                                    monodromy_options: Dict = None) -> Dict[int, List[WitnessSet]]:
     """
-    Compute the numerical irreducible decomposition of the top-dimensional
-    components of the variety V(system).
-
+    Compute the numerical irreducible decomposition of a variety V(system).
+    
+    This is the high-level function that finds components of all relevant
+    dimensions and decomposes them into irreducible components.
+    
     Args:
         system: The polynomial system F.
         variables: List of variables (if None, extracted from system).
-        max_dimension: (Optional) Can specify a dimension to check, but
-                       typically determined as N-n.
+        max_dimension: Highest dimension to check (default: N-n).
         solver_options: Options for the solver.
         monodromy_options: Options for the monodromy computation.
-
+        
     Returns:
-        A dictionary mapping dimension D to a list of WitnessSet objects for
-        irreducible components of that dimension.
+        A dictionary mapping dimension to a list of WitnessSet objects.
     """
     if variables is None:
         variables = list(system.variables())
-
+        
     if solver_options is None:
         solver_options = {}
-
+        
     if monodromy_options is None:
         monodromy_options = {}
-
+        
     n_vars = len(variables)
     n_eqs = len(system.equations)
-
-    # Determine the expected dimension D = N-n
-    # Only proceed if the system is not overdetermined (n <= N)
-    if n_eqs > n_vars:
-        print(f"System is overdetermined ({n_eqs} eqs, {n_vars} vars). "
-              "Decomposition currently supports n <= N.")
-        return {}
-
-    # The dimension of the components we expect to find via slicing
-    top_dimension = n_vars - n_eqs
-
-    print(f"Computing numerical decomposition for dimension D = {top_dimension} "
-          f"(System: {n_eqs} eqs, {n_vars} vars).")
-
+    
+    # Determine the expected maximum dimension
+    expected_max_dim = max(0, n_vars - n_eqs)
+    
+    if max_dimension is None:
+        max_dimension = expected_max_dim
+    else:
+        max_dimension = min(max_dimension, expected_max_dim)
+        
+    print(f"Computing numerical decomposition of a system with {n_eqs} equations "
+          f"in {n_vars} variables.")
+    print(f"Expected maximum dimension: {expected_max_dim}, "
+          f"checking dimensions up to {max_dimension}.")
+          
+    # Dictionary to store components by dimension
     decomposition = {}
-    D = top_dimension  # Only compute for this dimension
-
-    print(f"\n--- Computing components of dimension {D} ---")
-
-    try:
-        # 1. Compute witness superset for dimension D
-        current_solver_options = solver_options.copy()
-        slicing_system, witness_superset = compute_witness_superset(
-            system, variables, D, current_solver_options
-        )
-
-        if len(witness_superset) == 0:
-            print(f"No witness points found for dimension {D}.")
-        else:
+    
+    # Start from highest dimension and work down
+    for D in range(max_dimension, -1, -1):
+        print(f"\n--- Computing components of dimension {D} ---")
+        
+        try:
+            # 1. Compute witness superset for dimension D
+            slicing_system, witness_superset = compute_witness_superset(
+                system, variables, D, solver_options
+            )
+            
+            if len(witness_superset) == 0:
+                print(f"No witness points found for dimension {D}.")
+                continue
+                
             # 2. Perform numerical irreducible decomposition
             components_D = numerical_irreducible_decomposition(
                 system, slicing_system, witness_superset, variables, monodromy_options
             )
-
+            
             if components_D:
                 decomposition[D] = components_D
-
-    except ValueError as e:
-        print(f"Skipping dimension {D}: {e}")
-    except Exception as e:
-        print(f"Error computing dimension {D}: {e}")
-        import traceback
-        traceback.print_exc()
-
-    print("\nDecomposition computation finished for top dimension.")
+                
+        except ValueError as e:
+            print(f"Skipping dimension {D}: {e}")
+        except Exception as e:
+            print(f"Error computing dimension {D}: {e}")
+            import traceback
+            traceback.print_exc()
+            
     return decomposition

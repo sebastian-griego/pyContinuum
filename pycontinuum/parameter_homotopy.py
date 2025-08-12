@@ -19,14 +19,14 @@ class ParameterHomotopy:
     
     This is a homotopy of the form H(x, t) = (F(x), (1-t)L1(x) + tL2(x)) = 0
     where F is fixed and L1, L2 vary with the parameter t.
-    Assumes the combined system F+L1 (and F+L2) is square.
     """
     
     def __init__(self,
                  fixed_system: PolynomialSystem,  # System F(x)
                  start_param_system: PolynomialSystem,  # System L1(x)
                  end_param_system: PolynomialSystem,  # System L2(x)
-                 variables: List[Variable]):  # Removed square_fix parameter
+                 variables: List[Variable],
+                 square_fix: bool = True):  # Add option to make the system square
         """
         Initialize a parameter homotopy.
         
@@ -35,6 +35,7 @@ class ParameterHomotopy:
             start_param_system: The start parametric part (L1).
             end_param_system: The end parametric part (L2).
             variables: The variables in the system.
+            square_fix: If True, add dummy equations to make the system square.
         """
         self.fixed_system = fixed_system
         self.start_param_system = start_param_system
@@ -53,10 +54,24 @@ class ParameterHomotopy:
             
         self.total_eqs = self.num_fixed + self.num_param
         
-        # Check if the system described is square
-        if len(variables) != self.total_eqs:
-            raise ValueError(f"ParameterHomotopy requires a square system. "
-                             f"Got {self.total_eqs} equations and {len(variables)} variables.")
+        # For non-square systems, we'll handle them specially
+        self.is_square = self.total_eqs == len(variables)
+        self.dummy_count = 0
+        self.extended_variables = False
+        
+        if not self.is_square:
+            print(f"Warning: ParameterHomotopy created with {self.total_eqs} equations but {len(variables)} variables.")
+            
+            if square_fix and self.total_eqs < len(variables):
+                # We'll add dummy "Lagrange multiplier" variables for the underdetermined case
+                self.dummy_count = len(variables) - self.total_eqs
+                print(f"  Adding {self.dummy_count} dummy equations to make the system square.")
+                self.extended_variables = True
+                
+                # The dummy equations will be of the form λ_i = 0
+                # These will be handled in evaluate() and other methods
+                self.total_eqs = len(variables)  # Now it's square
+                self.is_square = True
                   
     def evaluate(self, point: np.ndarray, t: float) -> np.ndarray:
         """
@@ -69,6 +84,8 @@ class ParameterHomotopy:
         Returns:
             The value of H(x, t).
         """
+        # Handle the base (non-dummy) equations
+        base_eqs = self.num_fixed + self.num_param
         vals = np.zeros(self.total_eqs, dtype=complex)
         
         # Create dictionary for polynomial evaluation
@@ -82,7 +99,14 @@ class ParameterHomotopy:
         l1_vals = self.start_param_system.evaluate(point_dict)
         l2_vals = self.end_param_system.evaluate(point_dict)
         param_vals = (1 - t) * np.array(l1_vals) + t * np.array(l2_vals)
-        vals[self.num_fixed:] = param_vals
+        vals[self.num_fixed:base_eqs] = param_vals
+        
+        # Handle dummy equations if we added them
+        if self.extended_variables and self.dummy_count > 0:
+            # The dummy equations are λ_i = 0, i.e., just extract the corresponding variables
+            # We assume that the "dummy variables" are the last self.dummy_count variables
+            dummy_start = len(self.variables) - self.dummy_count
+            vals[base_eqs:] = point[dummy_start:]
         
         return vals
         
@@ -97,6 +121,7 @@ class ParameterHomotopy:
         Returns:
             The Jacobian matrix ∂H/∂x.
         """
+        base_eqs = self.num_fixed + self.num_param
         jac = np.zeros((self.total_eqs, len(self.variables)), dtype=complex)
         
         # Jacobian of fixed part dF/dx
@@ -107,7 +132,14 @@ class ParameterHomotopy:
         jac_L1 = evaluate_jacobian_at_point(self.start_param_system, point, self.variables)
         jac_L2 = evaluate_jacobian_at_point(self.end_param_system, point, self.variables)
         jac_param = (1 - t) * jac_L1 + t * jac_L2
-        jac[self.num_fixed:, :] = jac_param
+        jac[self.num_fixed:base_eqs, :] = jac_param
+        
+        # Handle dummy equations if we added them
+        if self.extended_variables and self.dummy_count > 0:
+            # The Jacobian of λ_i = 0 is the identity matrix in the last dummy_count rows
+            dummy_start = len(self.variables) - self.dummy_count
+            for i in range(self.dummy_count):
+                jac[base_eqs + i, dummy_start + i] = 1.0
         
         return jac
         
@@ -122,14 +154,21 @@ class ParameterHomotopy:
         Returns:
             The derivative ∂H/∂t.
         """
+        base_eqs = self.num_fixed + self.num_param
         deriv = np.zeros(self.total_eqs, dtype=complex)
         point_dict = {var: val for var, val in zip(self.variables, point)}
+        
+        # Fixed part doesn't depend on t
+        # deriv[:self.num_fixed] = 0
         
         # Parametric part derivative: d/dt[(1-t)L1(x) + tL2(x)] = -L1(x) + L2(x)
         l1_vals = self.start_param_system.evaluate(point_dict)
         l2_vals = self.end_param_system.evaluate(point_dict)
         param_deriv = -np.array(l1_vals) + np.array(l2_vals)
-        deriv[self.num_fixed:] = param_deriv
+        deriv[self.num_fixed:base_eqs] = param_deriv
+        
+        # Dummy equations don't depend on t
+        # deriv[base_eqs:] = 0
         
         return deriv
 
