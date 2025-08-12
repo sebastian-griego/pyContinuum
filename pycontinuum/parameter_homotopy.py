@@ -124,15 +124,19 @@ class ParameterHomotopy:
         base_eqs = self.num_fixed + self.num_param
         jac = np.zeros((self.total_eqs, len(self.variables)), dtype=complex)
         
-        # Jacobian of fixed part dF/dx
-        jac_F = evaluate_jacobian_at_point(self.fixed_system, point, self.variables)
-        jac[:self.num_fixed, :] = jac_F
+        # Jacobian of fixed part dF/dx (may be empty if no fixed equations)
+        if self.num_fixed > 0:
+            jac_F = evaluate_jacobian_at_point(self.fixed_system, point, self.variables)
+            if jac_F.size:
+                jac[:self.num_fixed, :] = jac_F
         
         # Jacobian of parametric part (1-t)dL1/dx + t*dL2/dx
-        jac_L1 = evaluate_jacobian_at_point(self.start_param_system, point, self.variables)
-        jac_L2 = evaluate_jacobian_at_point(self.end_param_system, point, self.variables)
-        jac_param = (1 - t) * jac_L1 + t * jac_L2
-        jac[self.num_fixed:base_eqs, :] = jac_param
+        if self.num_param > 0:
+            jac_L1 = evaluate_jacobian_at_point(self.start_param_system, point, self.variables)
+            jac_L2 = evaluate_jacobian_at_point(self.end_param_system, point, self.variables)
+            jac_param = (1 - t) * jac_L1 + t * jac_L2
+            if jac_param.size:
+                jac[self.num_fixed:base_eqs, :] = jac_param
         
         # Handle dummy equations if we added them
         if self.extended_variables and self.dummy_count > 0:

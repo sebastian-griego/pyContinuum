@@ -47,6 +47,10 @@ def evaluate_jacobian_at_point(system: PolynomialSystem,
             jac_row.append(poly.evaluate(var_dict))
         jac_values.append(jac_row)
     
+    # Handle zero-equation systems: return a (0, n_vars) empty matrix
+    if len(jac_values) == 0:
+        return np.zeros((0, len(variables)), dtype=complex)
+    
     # Convert to numpy array
     return np.array(jac_values, dtype=complex)
 
