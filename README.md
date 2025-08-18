@@ -43,13 +43,22 @@ print(solutions)
 
 ```bash
 pip install pycontinuum
+pip install pycontinuum[viz]
+pip install pycontinuum[monodromy]
 ```
 
-Optional features:
+## Publishing (maintainers)
 
 ```bash
-# Monodromy-related functionality
-pip install pycontinuum[monodromy]
+python -m pip install --upgrade pip build twine
+python -m build
+python -m twine check dist/*
+# TestPyPI
+setx TWINE_USERNAME __token__
+setx TWINE_PASSWORD pypi-XXXXX
+python -m twine upload --repository testpypi dist/*
+# PyPI
+python -m twine upload dist/*
 ```
 
 

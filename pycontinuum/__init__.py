@@ -6,7 +6,7 @@ homotopy continuation, with a focus on ease of use and integration with
 the Python scientific ecosystem.
 """
 
-__version__ = "0.1.0"
+__version__ = "0.1.1"
 
 # Import from polynomial module
 from pycontinuum.polynomial import (
