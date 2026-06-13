@@ -201,6 +201,16 @@ class SolutionSet:
         result._meta['is_filtered'] = True
         return result
 
+    def diagnostics(self, **kwargs):
+        """Audit residuals, Jacobian rank, conditioning, and duplicates.
+
+        Keyword arguments are forwarded to
+        :func:`pycontinuum.validation.diagnose_solutions`.
+        """
+        from pycontinuum.validation import diagnose_solutions
+
+        return diagnose_solutions(self, **kwargs)
+
 def solve(system: PolynomialSystem, 
           start_system=None,
           start_solutions=None,
