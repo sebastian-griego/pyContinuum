@@ -5,11 +5,13 @@ This module provides classes and functions for computing and manipulating
 witness sets, which represent positive-dimensional components of algebraic varieties.
 """
 
+from typing import Any, Dict, List, Optional, Set, Tuple
+
 import numpy as np
-from typing import List, Dict, Tuple, Set, Any, Optional
 
 from pycontinuum.polynomial import Variable, Polynomial, PolynomialSystem, Monomial, polyvar
 from pycontinuum.solver import solve, Solution, SolutionSet
+from pycontinuum.start_systems import _coerce_rng
 
 
 class WitnessSet:
@@ -54,7 +56,8 @@ class WitnessSet:
     def sample_point(self, 
                     target_slice: Optional[PolynomialSystem] = None, 
                     variables: Optional[List[Variable]] = None,
-                    options: Dict[str, Any] = None) -> Optional[np.ndarray]:
+                    options: Dict[str, Any] = None,
+                    random_state: Any = None) -> Optional[np.ndarray]:
         """
         Sample a point on the component by moving to a different slice.
         
@@ -63,6 +66,7 @@ class WitnessSet:
                           If None, a random slice will be generated.
             variables: The system variables. If None, extracted from original system.
             options: Options for parameter tracking.
+            random_state: Optional seed or NumPy random generator.
             
         Returns:
             A point on the component at the target slice, or None if tracking fails.
@@ -75,16 +79,17 @@ class WitnessSet:
             
         if options is None:
             options = {}
+        rng = _coerce_rng(random_state)
             
         # If no target slice provided, generate a random one
         if target_slice is None:
-            target_slice = generate_generic_slice(self.dimension, variables)
+            target_slice = generate_generic_slice(self.dimension, variables, random_state=rng)
             
         # Choose a random witness point to track
         if not self.witness_points:
             return None
             
-        source_point_sol = np.random.choice(self.witness_points)
+        source_point_sol = rng.choice(self.witness_points)
         source_point = np.array([source_point_sol.values[var] for var in variables], dtype=complex)
         
         # Create parameter homotopy from current slice to target slice
@@ -109,7 +114,8 @@ class WitnessSet:
     def is_point_on_component(self, 
                              point: np.ndarray, 
                              variables: List[Variable],
-                             tolerance: float = 1e-8) -> bool:
+                             tolerance: float = 1e-8,
+                             random_state: Any = None) -> bool:
         """
         Check if a point lies on this component.
         
@@ -119,6 +125,7 @@ class WitnessSet:
             point: The point to test.
             variables: The system variables.
             tolerance: Tolerance for equality.
+            random_state: Optional seed or NumPy random generator.
             
         Returns:
             True if the point is on this component, False otherwise.
@@ -133,13 +140,15 @@ class WitnessSet:
         # Check if the point satisfies the original system
         if np.linalg.norm(system_vals) > tolerance:
             return False
+
+        rng = _coerce_rng(random_state)
             
         # Generate a random generic slice through the point
         # We need to create D linear equations that all pass through the test point
         target_slice_eqs = []
         for _ in range(self.dimension):
             # Generate random coefficients
-            coeffs = np.random.randn(len(variables)) + 1j * np.random.randn(len(variables))
+            coeffs = rng.standard_normal(len(variables)) + 1j * rng.standard_normal(len(variables))
             
             # Compute constant term so the equation passes through the point
             const_term = -sum(coef * val for coef, val in zip(coeffs, point))
@@ -155,7 +164,7 @@ class WitnessSet:
         target_slice = PolynomialSystem(target_slice_eqs)
         
         # Try to track a witness point to this new slice
-        sample_pt = self.sample_point(target_slice, variables)
+        sample_pt = self.sample_point(target_slice, variables, random_state=rng)
         if sample_pt is None:
             # Tracking failed, can't determine membership
             return False
@@ -165,7 +174,9 @@ class WitnessSet:
         return dist < tolerance
 
 
-def generate_generic_slice(dimension: int, variables: List[Variable]) -> PolynomialSystem:
+def generate_generic_slice(dimension: int,
+                           variables: List[Variable],
+                           random_state: Any = None) -> PolynomialSystem:
     """
     Generate D random linear equations in the given variables.
     
@@ -174,18 +185,20 @@ def generate_generic_slice(dimension: int, variables: List[Variable]) -> Polynom
     Args:
         dimension: Number of linear equations to generate (D).
         variables: The variables to use.
+        random_state: Optional seed or NumPy random generator.
         
     Returns:
         A PolynomialSystem representing the slicing system L.
     """
     n_vars = len(variables)
     slice_eqs = []
+    rng = _coerce_rng(random_state)
     
     for _ in range(dimension):
         # Generate random complex coefficients for the linear equation
         # Using standard normal distribution for both real and imaginary parts
-        coeffs = np.random.randn(n_vars) + 1j * np.random.randn(n_vars)
-        const = np.random.randn() + 1j * np.random.randn()
+        coeffs = rng.standard_normal(n_vars) + 1j * rng.standard_normal(n_vars)
+        const = rng.standard_normal() + 1j * rng.standard_normal()
         
         # Build the polynomial: a1*x1 + a2*x2 + ... + an*xn + c = 0
         # Start with the constant term
@@ -204,7 +217,8 @@ def generate_generic_slice(dimension: int, variables: List[Variable]) -> Polynom
 def compute_witness_superset(original_system: PolynomialSystem,
                             variables: List[Variable],
                             dimension: int,
-                            solver_options: Dict = None) -> Tuple[PolynomialSystem, SolutionSet]:
+                            solver_options: Dict = None,
+                            random_state: Any = None) -> Tuple[PolynomialSystem, SolutionSet]:
     """
     Compute a witness superset for components of a given dimension.
     
@@ -216,12 +230,14 @@ def compute_witness_superset(original_system: PolynomialSystem,
         variables: List of variables.
         dimension: The dimension of components to find witness points for.
         solver_options: Options passed to the solver.
+        random_state: Optional seed or NumPy random generator.
         
     Returns:
         Tuple of (slicing_system, witness_superset).
     """
     if solver_options is None:
         solver_options = {}
+    rng = _coerce_rng(random_state)
         
     n_equations = len(original_system.equations)
     n_variables = len(variables)
@@ -241,7 +257,7 @@ def compute_witness_superset(original_system: PolynomialSystem,
         raise ValueError("Dimension must be non-negative")
         
     # Generate D generic linear slicing equations L
-    slicing_system = generate_generic_slice(dimension, variables)
+    slicing_system = generate_generic_slice(dimension, variables, random_state=rng)
     
     # Create the augmented system F' = (F, L)
     augmented_equations = original_system.equations + slicing_system.equations
@@ -284,7 +300,7 @@ def compute_witness_superset(original_system: PolynomialSystem,
         # Generate random complex coefficients for the start system
         c_values = []
         for i in range(n_variables):
-            angle = np.random.uniform(0, 2 * np.pi)
+            angle = rng.uniform(0, 2 * np.pi)
             c_values.append(complex(np.cos(angle), np.sin(angle)))
         
         # Create the start system equations x_i^(d_i) - c_i = 0

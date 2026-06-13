@@ -15,8 +15,8 @@ copyright = f'{datetime.datetime.now().year}, PyContinuum Contributors'
 author = 'PyContinuum Contributors'
 
 # The full version, including alpha/beta/rc tags
-release = '0.1.0'
-version = '0.1.0'
+release = '0.1.1'
+version = '0.1.1'
 
 # Extensions
 extensions = [

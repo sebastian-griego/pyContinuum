@@ -47,6 +47,15 @@ pip install pycontinuum[viz]
 pip install pycontinuum[monodromy]
 ```
 
+## Reproducible Solves
+
+Random generic start systems are part of homotopy continuation. Pass
+`random_state` when you need reproducible start systems and solution ordering:
+
+```python
+solutions = solve(system, random_state=123)
+```
+
 ## Publishing (maintainers)
 
 ```bash
