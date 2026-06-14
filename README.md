@@ -47,6 +47,34 @@ pip install pycontinuum[viz]
 pip install pycontinuum[monodromy]
 ```
 
+## Reproducible Solves
+
+Random generic start systems are part of homotopy continuation. Pass
+`random_state` when you need reproducible start systems and solution ordering:
+
+```python
+solutions = solve(system, random_state=123)
+```
+
+## Solution Diagnostics
+
+Use the diagnostics layer to turn numerical roots into an auditable report with
+residual norms, Jacobian rank, condition numbers, real-solution counts, and
+duplicate clusters:
+
+```python
+from pycontinuum import diagnose_solutions
+
+solutions = solve(system, random_state=123)
+audit = diagnose_solutions(solutions, tolerance=1e-8)
+
+print(audit.summary())
+assert audit.all_valid
+```
+
+You can also call `solutions.diagnostics(tolerance=1e-8)` directly on a
+`SolutionSet`.
+
 ## Publishing (maintainers)
 
 ```bash

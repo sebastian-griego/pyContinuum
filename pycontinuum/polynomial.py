@@ -5,8 +5,11 @@ This module provides classes and functions for representing and manipulating
 multivariate polynomials and polynomial systems.
 """
 
-import numpy as np
+import re
+from numbers import Integral
 from typing import Dict, List, Tuple, Union, Set, Any, Optional
+
+import numpy as np
 
 
 class Variable:
@@ -18,6 +21,10 @@ class Variable:
         Args:
             name: String name of the variable
         """
+        if not isinstance(name, str):
+            raise TypeError("Variable name must be a string")
+        if not name or any(ch.isspace() for ch in name):
+            raise ValueError("Variable name must be a non-empty string without whitespace")
         self.name = name
         
     def __repr__(self) -> str:
@@ -34,6 +41,10 @@ class Variable:
     
     def __pow__(self, exponent: int) -> "Polynomial":
         """Raise the variable to a power, creating a polynomial."""
+        if isinstance(exponent, bool) or not isinstance(exponent, Integral):
+            raise ValueError("Exponent must be a non-negative integer")
+        if exponent < 0:
+            raise ValueError("Exponent must be a non-negative integer")
         return Polynomial([Monomial({self: exponent})])
     
     def __mul__(self, other: Any) -> Union["Polynomial", "Monomial"]:
@@ -105,6 +116,14 @@ class Monomial:
             variables: Dict mapping Variable objects to their exponents
             coefficient: Coefficient of the monomial (default: 1)
         """
+        for var, exp in variables.items():
+            if not isinstance(var, Variable):
+                raise TypeError("Monomial variables must be Variable instances")
+            if isinstance(exp, bool) or not isinstance(exp, Integral):
+                raise TypeError("Monomial exponents must be integers")
+            if exp < 0:
+                raise ValueError("Monomial exponents must be non-negative")
+
         # Filter out zero exponents
         self.variables = {var: exp for var, exp in variables.items() if exp != 0}
         self.coefficient = coefficient
@@ -306,18 +325,14 @@ class Polynomial:
         
         term_strs: List[str] = []
         for i, term in enumerate(self.terms):
+            term_repr = str(term)
             if i == 0:
-                term_strs.append(str(term))
+                term_strs.append(term_repr)
             else:
-                if term.coefficient.real > 0:
-                    # + always gets a space after it
-                    term_strs.append(f"+ {term}")
+                if term_repr.startswith("-"):
+                    term_strs.append(f"- {term_repr[1:]}")
                 else:
-                    # negative: strip the leading "-" from str(term) and
-                    # then prepend "- " so we get " - foo" instead of "-foo"
-                    s = str(term)
-                    assert s.startswith("-"), "unexpected repr for negative term"
-                    term_strs.append(f"- {s[1:]}")
+                    term_strs.append(f"+ {term_repr}")
         
         return " ".join(term_strs)
 
@@ -334,61 +349,100 @@ class Polynomial:
         Returns:
             Polynomial instance
         """
-        import re
-
+        if not isinstance(expr, str) or not expr.strip():
+            raise ValueError("Polynomial expression must be a non-empty string")
         if variables is None:
             variables = {}
 
-        # Normalize expression: insert * between number/var and var (e.g., 2x -> 2*x)
-        normalized = re.sub(r"(\d)([A-Za-z])", r"\1*\2", expr)
-        normalized = re.sub(r"([A-Za-z])(\d)", r"\1*\2", normalized)
-        normalized = normalized.replace(" ", "")
+        token_pattern = re.compile(
+            r"(?P<number>(?:\d+(?:\.\d*)?|\.\d+)(?:[eE][+-]?\d+)?)"
+            r"|(?P<name>[A-Za-z_][A-Za-z0-9_]*)"
+            r"|(?P<op>[+\-*^])"
+        )
+        compact = "".join(expr.split())
+        tokens: List[Tuple[str, str]] = []
+        pos = 0
+        while pos < len(compact):
+            match = token_pattern.match(compact, pos)
+            if not match:
+                raise ValueError(f"Unexpected token at position {pos}: {compact[pos]!r}")
+            kind = match.lastgroup
+            value = match.group()
+            tokens.append((kind, value))
+            pos = match.end()
 
-        # Tokenize by plus/minus while keeping signs
-        # Split into terms like ['+x^2', '-3*x*y', '+1']
+        def parse_exponent(value: str) -> int:
+            try:
+                numeric = float(value)
+            except ValueError as exc:
+                raise ValueError(f"Invalid exponent: {value}") from exc
+            if not numeric.is_integer() or numeric < 0:
+                raise ValueError("Exponents must be non-negative integers")
+            return int(numeric)
+
         terms: List[Monomial] = []
-        for token in re.finditer(r"[+-]?[^+-]+", normalized):
-            term_str = token.group(0)
-            if not term_str:
-                continue
+        i = 0
+        while i < len(tokens):
             sign = 1.0
-            if term_str[0] == '+':
-                term_str = term_str[1:]
-            elif term_str[0] == '-':
+            if tokens[i] == ("op", "+"):
+                i += 1
+            elif tokens[i] == ("op", "-"):
                 sign = -1.0
-                term_str = term_str[1:]
+                i += 1
 
-            if term_str == "":
-                continue
-
-            # Split by '*'
-            factors = term_str.split('*')
-            coef: complex = 1.0
+            coef: complex = sign
             var_exp: Dict[Variable, int] = {}
+            found_factor = False
+            expect_factor = True
 
-            for f in factors:
-                if f == "":
-                    continue
-                # Constant number?
-                try:
-                    coef *= float(f)
-                    continue
-                except ValueError:
-                    pass
+            while i < len(tokens):
+                kind, value = tokens[i]
 
-                # Variable or power like x^2
-                if '^' in f:
-                    name, exp_str = f.split('^', 1)
-                    exp = int(exp_str)
+                if kind == "op" and value in "+-":
+                    break
+
+                if kind == "op" and value == "*":
+                    if expect_factor:
+                        raise ValueError("Unexpected '*' in polynomial expression")
+                    expect_factor = True
+                    i += 1
+                    continue
+
+                if kind == "number":
+                    coef *= float(value)
+                    i += 1
+                    found_factor = True
+                    expect_factor = False
+                    continue
+
+                if kind == "name":
+                    name = value
+                    i += 1
+                    exp = 1
+                    if i < len(tokens) and tokens[i] == ("op", "^"):
+                        i += 1
+                        if i >= len(tokens) or tokens[i][0] != "number":
+                            raise ValueError("Expected integer exponent after '^'")
+                        exp = parse_exponent(tokens[i][1])
+                        i += 1
+
+                    if name not in variables:
+                        variables[name] = Variable(name)
+                    var = variables[name]
+                    var_exp[var] = var_exp.get(var, 0) + exp
+                    found_factor = True
+                    expect_factor = False
+                    continue
+
+                if kind == "op" and value == "^":
+                    raise ValueError("Unexpected '^' in polynomial expression")
                 else:
-                    name, exp = f, 1
+                    raise ValueError(f"Unexpected token: {value}")
 
-                if name not in variables:
-                    variables[name] = Variable(name)
-                var = variables[name]
-                var_exp[var] = var_exp.get(var, 0) + exp
+            if not found_factor or expect_factor:
+                raise ValueError("Incomplete polynomial term")
 
-            terms.append(Monomial(var_exp, coefficient=sign * coef))
+            terms.append(Monomial(var_exp, coefficient=coef))
 
         return Polynomial(terms)
     
@@ -551,6 +605,10 @@ class PolynomialSystem:
         for eq in self.equations:
             vars_set.update(eq.variables())
         return vars_set
+
+    def ordered_variables(self) -> List[Variable]:
+        """Get system variables in deterministic name order."""
+        return sorted(self.variables(), key=lambda var: var.name)
     
     def evaluate(self, values: Dict[Variable, complex]) -> List[complex]:
         """Evaluate the system at specific variable values.
@@ -591,6 +649,8 @@ def polyvar(*names: str) -> Union[Variable, Tuple[Variable, ...]]:
     Returns:
         A single Variable or a tuple of Variables
     """
+    if not names:
+        raise ValueError("At least one variable name is required")
     variables = tuple(Variable(name) for name in names)
     return variables[0] if len(variables) == 1 else variables
 

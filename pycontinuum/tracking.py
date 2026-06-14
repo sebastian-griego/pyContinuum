@@ -406,8 +406,14 @@ def track_paths(start_system: PolynomialSystem,
             debug=False  # Default to no debug output
         )
         
-        # If using endgame, apply it
-        if use_endgame:
+        # Polish successful endpoints at t=0. For regular paths this is just a
+        # Newton cleanup; preserve the existing singular classification.
+        if (
+            use_endgame
+            and path_info.get('success', False)
+        ):
+            was_singular = path_info.get('singular', False)
+            used_endgame = path_info.get('endgame_used', False)
             final_point, endgame_info = run_cauchy_endgame(
                 start_system=start_system,
                 target_system=target_system,
@@ -418,6 +424,11 @@ def track_paths(start_system: PolynomialSystem,
             )
             end_sol = final_point
             path_info.update(endgame_info)
+            path_info['singular'] = was_singular
+            if was_singular or used_endgame:
+                path_info['endgame_used'] = True
+            else:
+                path_info['polished'] = True
         
         # Store results
         end_solutions.append(end_sol)

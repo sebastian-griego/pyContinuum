@@ -14,18 +14,27 @@ from pycontinuum.polynomial import (
     Variable,
     Monomial,
     Polynomial,
-    PolynomialSystem
+    PolynomialSystem,
 )
 
 # Import from solver module
-from pycontinuum.solver import (
-    solve,
-    Solution,
-    SolutionSet
+from pycontinuum.solver import solve, Solution, SolutionSet
+
+# Import validation helpers
+from pycontinuum.validation import (
+    SolutionAudit,
+    SolutionDiagnostics,
+    diagnose_solution,
+    diagnose_solutions,
+    validate_solutions,
 )
 
 # Import from other modules as needed
-from pycontinuum.witness_set import WitnessSet, generate_generic_slice, compute_witness_superset
+from pycontinuum.witness_set import (
+    WitnessSet,
+    generate_generic_slice,
+    compute_witness_superset,
+)
 from pycontinuum.parameter_homotopy import ParameterHomotopy, track_parameter_path
 
 # Note: Monodromy functionality depends on optional sympy combinatorics.
@@ -44,10 +53,15 @@ __all__ = [
     "solve",
     "Solution",
     "SolutionSet",
+    "SolutionAudit",
+    "SolutionDiagnostics",
+    "diagnose_solution",
+    "diagnose_solutions",
+    "validate_solutions",
     "WitnessSet",
     "generate_generic_slice",
     "compute_witness_superset",
     "ParameterHomotopy",
     "track_parameter_path",
     # Monodromy exports intentionally omitted from default namespace
-]   
+]

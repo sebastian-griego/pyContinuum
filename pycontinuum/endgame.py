@@ -583,7 +583,8 @@ def run_cauchy_endgame(start_system: PolynomialSystem,
         tol = opts.get('abstol', 1e-10)
         corrected, success, iters = newton_corrector(
             target_system, point, variables, 
-            max_iters=20, tol=tol * 10  # More iterations and looser tolerance
+            max_iters=opts.get('newton_max_iters', 50),
+            tol=tol
         )
         
         result_info = {

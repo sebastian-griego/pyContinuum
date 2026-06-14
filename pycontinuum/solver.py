@@ -9,7 +9,7 @@ import time
 import numpy as np
 from typing import Dict, List, Tuple, Set, Optional, Union, Any, Callable
 
-from pycontinuum.polynomial import Variable, Polynomial, PolynomialSystem
+from pycontinuum.polynomial import Variable, Polynomial, PolynomialSystem, polyvar as _polyvar
 from pycontinuum.start_systems import generate_total_degree_start_system
 from pycontinuum.tracking import track_paths
 
@@ -201,6 +201,16 @@ class SolutionSet:
         result._meta['is_filtered'] = True
         return result
 
+    def diagnostics(self, **kwargs):
+        """Audit residuals, Jacobian rank, conditioning, and duplicates.
+
+        Keyword arguments are forwarded to
+        :func:`pycontinuum.validation.diagnose_solutions`.
+        """
+        from pycontinuum.validation import diagnose_solutions
+
+        return diagnose_solutions(self, **kwargs)
+
 def solve(system: PolynomialSystem, 
           start_system=None,
           start_solutions=None,
@@ -212,7 +222,8 @@ def solve(system: PolynomialSystem,
           endgame_options: Optional[Dict[str, Any]] = None,
           deduplication_tol_factor: float = 10.0,
           singular_deduplication_tol: float = 1e-3,
-          allow_underdetermined: bool = False) -> SolutionSet:  # Added this parameter
+          allow_underdetermined: bool = False,
+          random_state: Any = None) -> SolutionSet:
     """Solve a polynomial system using homotopy continuation.
     Args:
         system: The polynomial system to solve
@@ -227,6 +238,7 @@ def solve(system: PolynomialSystem,
         deduplication_tol_factor: Factor multiplied by `tol` for regular solution deduplication.
         singular_deduplication_tol: Absolute tolerance for singular solution deduplication.
         allow_underdetermined: Whether to allow systems with fewer equations than variables
+        random_state: Optional seed or NumPy random generator for reproducible start systems
         
     Returns:
         A SolutionSet containing all found solutions
@@ -235,7 +247,9 @@ def solve(system: PolynomialSystem,
     
     # Get the variables in the system
     if variables is None:
-        variables = list(system.variables())
+        variables = system.ordered_variables()
+    else:
+        variables = list(variables)
         
     if verbose:
         print(f"Variables used for solving: {variables}")
@@ -247,7 +261,7 @@ def solve(system: PolynomialSystem,
             
         # Pass allow_underdetermined parameter to start system generator
         start_system, start_solutions = generate_total_degree_start_system(
-            system, variables, allow_underdetermined
+            system, variables, allow_underdetermined, random_state=random_state
         )
         
         if verbose:
@@ -301,18 +315,18 @@ def solve(system: PolynomialSystem,
         # Create Solution object
         solution_dict = {var: val for var, val in zip(variables, final_point)}
         residual = compute_residual(solution_dict)
+        is_singular = path_result_info.get('singular', False)
+        winding_number = path_result_info.get('winding_number', None)
 
-        # Skip solutions with large residuals (adjust tolerance if endgame was used?)
-        # Maybe the endgame success check is sufficient, but keeping this as a safeguard
-        if residual > 100 * tol: # Consider a different tolerance if endgame was used
+        residual_limit = 100 * tol
+        if is_singular or path_result_info.get('endgame_used', False):
+            residual_limit = max(residual_limit, singular_deduplication_tol)
+
+        if residual > residual_limit:
              if verbose:
                  print(f"Skipping solution from path {i} due to large residual ({residual:.2e})")
              failed_paths += 1 # Count as failed path if residual is too high
              continue
-
-        # Determine singularity status and winding number from path_result_info
-        is_singular = path_result_info.get('singular', False)
-        winding_number = path_result_info.get('winding_number', None)
 
         solution = Solution(
             values=solution_dict,
@@ -389,5 +403,4 @@ def polyvar(*names: str) -> Union[Variable, Tuple[Variable, ...]]:
     Returns:
         A single Variable or a tuple of Variables
     """
-    variables = tuple(Variable(name) for name in names)
-    return variables[0] if len(variables) == 1 else variables
+    return _polyvar(*names)
