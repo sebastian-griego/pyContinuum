@@ -26,7 +26,7 @@ class TestReadmeExamples:
         system = PolynomialSystem([f1, f2])
         
         # Solve the system
-        solutions = solve(system)
+        solutions = solve(system, random_state=0)
         
         # Display solutions - should not raise an error
         solution_output = str(solutions)
@@ -129,7 +129,12 @@ class TestExampleScript:
         
         # Test solve with verbose flag (used in example)
         start_time = time.time()
-        solutions = solve(system, variables=variables_list, verbose=True)
+        solutions = solve(
+            system,
+            variables=variables_list,
+            verbose=True,
+            random_state=0,
+        )
         solve_time = time.time() - start_time
         
         # Should complete in reasonable time
@@ -157,7 +162,7 @@ class TestExampleScript:
         f2 = x**2 - y
         system = PolynomialSystem([f1, f2])
         
-        solutions = solve(system)
+        solutions = solve(system, random_state=0)
         
         # Test real solution filtering (used in example for plotting)
         real_solutions = solutions.filter(real=True)
@@ -221,7 +226,7 @@ class TestAdvancedExamples:
         system = PolynomialSystem([f1, f2, f3])
         
         # Should be able to solve (may have no solutions, that's okay)
-        solutions = solve(system)
+        solutions = solve(system, random_state=0)
         
         # Should return a solution set (even if empty)
         assert hasattr(solutions, '__len__')
@@ -265,7 +270,7 @@ class TestErrorCases:
         # This should either work or give a clear error
         try:
             system = PolynomialSystem([])
-            solutions = solve(system)
+            solutions = solve(system, random_state=0)
             # If it works, should return a solution set
             assert hasattr(solutions, '__len__')
         except (ValueError, RuntimeError):
@@ -288,7 +293,7 @@ class TestErrorCases:
         assert x in variables
         assert y in variables
         
-        solutions = solve(system)
+        solutions = solve(system, random_state=0)
         
         # Solutions should have values for both variables
         for sol in solutions:

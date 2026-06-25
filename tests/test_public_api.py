@@ -20,8 +20,17 @@ class TestImports:
             Polynomial,
             PolynomialSystem,
             solve,
+            refine_solution,
+            refine_solutions,
             Solution,
             SolutionSet,
+            generate_total_degree_solutions,
+            generate_total_degree_start_system,
+            compute_tangent,
+            homotopy_function,
+            homotopy_jacobian,
+            track_paths,
+            track_single_path,
             SolutionAudit,
             SolutionDiagnostics,
             diagnose_solution,
@@ -36,8 +45,17 @@ class TestImports:
         assert Polynomial is not None
         assert PolynomialSystem is not None
         assert solve is not None
+        assert refine_solution is not None
+        assert refine_solutions is not None
         assert Solution is not None
         assert SolutionSet is not None
+        assert generate_total_degree_solutions is not None
+        assert generate_total_degree_start_system is not None
+        assert compute_tangent is not None
+        assert homotopy_function is not None
+        assert homotopy_jacobian is not None
+        assert track_paths is not None
+        assert track_single_path is not None
         assert SolutionAudit is not None
         assert SolutionDiagnostics is not None
         assert diagnose_solution is not None
@@ -89,8 +107,17 @@ class TestImports:
             "Polynomial",
             "PolynomialSystem",
             "solve",
+            "refine_solution",
+            "refine_solutions",
             "Solution",
             "SolutionSet",
+            "generate_total_degree_solutions",
+            "generate_total_degree_start_system",
+            "compute_tangent",
+            "homotopy_function",
+            "homotopy_jacobian",
+            "track_paths",
+            "track_single_path",
             "SolutionAudit",
             "SolutionDiagnostics",
             "diagnose_solution",
@@ -131,11 +158,23 @@ class TestPolynomialCreation:
         assert str(x) == "x"
         assert str(y) == "y"
         assert str(z) == "z"
-
-        # Variables should be different objects
         assert x is not y
         assert y is not z
         assert x is not z
+
+    def test_polynomial_system_parse_public_method(self):
+        """Test parsing polynomial systems through the public class."""
+        from pycontinuum import PolynomialSystem
+
+        variables = {}
+        system = PolynomialSystem.parse("x + y = 1; x - y = 0", variables=variables)
+
+        assert len(system.equations) == 2
+        assert set(variables) == {"x", "y"}
+        assert system.evaluate({variables["x"]: 0.5, variables["y"]: 0.5}) == [
+            0.0,
+            0.0,
+        ]
 
     def test_polynomial_creation(self):
         """Test creating polynomials."""
@@ -184,7 +223,8 @@ class TestSolutionObjects:
 
         # Test SolutionSet properties
         assert len(solutions) == 1
-        assert isinstance(solutions, (list, object))  # SolutionSet should be iterable
+        assert list(solutions) == [solutions[0]]
+        assert next(iter(solutions)) is solutions[0]
 
         # Test Solution properties
         sol = solutions[0]

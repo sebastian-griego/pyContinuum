@@ -18,7 +18,26 @@ from pycontinuum.polynomial import (
 )
 
 # Import from solver module
-from pycontinuum.solver import solve, Solution, SolutionSet
+from pycontinuum.solver import (
+    solve,
+    refine_solution,
+    refine_solutions,
+    Solution,
+    SolutionSet,
+)
+
+# Import start-system and path-tracking helpers for custom homotopy workflows
+from pycontinuum.start_systems import (
+    generate_total_degree_solutions,
+    generate_total_degree_start_system,
+)
+from pycontinuum.tracking import (
+    compute_tangent,
+    homotopy_function,
+    homotopy_jacobian,
+    track_paths,
+    track_single_path,
+)
 
 # Import validation helpers
 from pycontinuum.validation import (
@@ -51,8 +70,17 @@ __all__ = [
     "Polynomial",
     "PolynomialSystem",
     "solve",
+    "refine_solution",
+    "refine_solutions",
     "Solution",
     "SolutionSet",
+    "generate_total_degree_solutions",
+    "generate_total_degree_start_system",
+    "compute_tangent",
+    "homotopy_function",
+    "homotopy_jacobian",
+    "track_paths",
+    "track_single_path",
     "SolutionAudit",
     "SolutionDiagnostics",
     "diagnose_solution",
