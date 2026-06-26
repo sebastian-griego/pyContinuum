@@ -246,7 +246,7 @@ class TestComplexityEdgeCases:
         f2 = x*y - 1
         system = PolynomialSystem([f1, f2])
         
-        solutions = solve(system)
+        solutions = solve(system, random_state=0)
         
         # Should find solutions
         assert len(solutions) > 0
