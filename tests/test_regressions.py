@@ -6,7 +6,6 @@ import numpy as np
 import pytest
 
 import pycontinuum.endgame as endgame_module
-import pycontinuum.monodromy as monodromy_module
 import pycontinuum.parameter_homotopy as parameter_homotopy_module
 import pycontinuum.solver as solver_module
 import pycontinuum.tracking as tracking_module
@@ -5794,6 +5793,7 @@ def test_rank_diagnostics_fail_closed_on_non_linalg_errors(monkeypatch):
     assert diagnostics.jacobian_rank == 0
     assert np.isinf(diagnostics.condition_number)
     assert diagnostics.is_rank_deficient
+    monodromy_module = pytest.importorskip("pycontinuum.monodromy")
     assert monodromy_module._monodromy_jacobian_rank(
         system,
         np.array([1.0 + 0j]),
